@@ -20,7 +20,6 @@ from .models import (
     TableInfo,
     TriggerInfo,
 )
-from .utils import get_database_specific_queries
 
 
 class SQLSafetyValidator:
@@ -238,7 +237,6 @@ def get_table_schema_tool(
 
     try:
         db_type = connector.get_database_type()
-        queries = get_database_specific_queries(db_type)
 
         if db_type == DatabaseType.POSTGRESQL:
             # Get row count and size for PostgreSQL
