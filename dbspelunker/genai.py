@@ -28,7 +28,6 @@ class GeminiModel:
             top_p=self.top_p,
             google_thinking_config={
                 "thinking_budget": self.thinking_budget,
-                "include_thoughts": True,
             },
         )
         model = GoogleModel(self.model, provider=self.provider, settings=settings)

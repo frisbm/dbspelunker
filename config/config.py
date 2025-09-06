@@ -11,6 +11,7 @@ class Config(BaseModel):
     token_limit: int
     location: Union[VertexAILocation, Literal["global"]]
     project_id: str
+    db_connection_string: str
 
 
 def load_config() -> Config:
