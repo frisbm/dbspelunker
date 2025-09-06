@@ -12,7 +12,7 @@ class GeminiModel:
 
         self.provider = GoogleProvider(
             project=config.project_id,
-            location=config.location,  # type: ignore[arg-type]
+            location=config.location,
         )
         self.__token_limit = config.token_limit
         self.top_p = 0.50
