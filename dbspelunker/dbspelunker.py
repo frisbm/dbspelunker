@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from typing import Optional
 
@@ -78,6 +79,28 @@ class DBSpelunker:
             )
             return f"Table {table_info.name} contains {len(table_info.columns)} columns and stores data related to the business domain."
 
+    async def generate_table_summary_async(
+        self, table_info: TableInfo, relationships: list[RelationshipInfo]
+    ) -> str:
+        """Generate AI-powered summary for a table asynchronously."""
+        try:
+            prompt = generate_table_summary_prompt(table_info, relationships)
+
+            # Create a simple agent for text generation
+            summary_agent = Agent(
+                model=self.gemini_model.get_model(temperature=0.3), output_type=str
+            )
+
+            response = await summary_agent.run(prompt)
+            return (
+                str(response.output) if hasattr(response, "output") else str(response)
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to generate AI summary for table {table_info.name}: {str(e)}"
+            )
+            return f"Table {table_info.name} contains {len(table_info.columns)} columns and stores data related to the business domain."
+
     def analyze_schema(self, schema_name: str) -> SchemaInfo:
         """Analyze a complete database schema."""
         # For now, use direct tool calls to avoid async issues
@@ -121,44 +144,15 @@ class DBSpelunker:
             self.logger.info(f"Analyzing schema: {schema.name}")
             schema_info = self.analyze_schema(schema.name)
 
-            # Generate AI summaries for each table
+            # Generate AI summaries for each table asynchronously
             self.logger.info(
-                f"Generating AI summaries for {len(schema_info.tables)} tables..."
+                f"Generating AI summaries for {len(schema_info.tables)} tables concurrently..."
             )
-            enhanced_tables = []
-            for table in schema_info.tables:
-                try:
-                    # Generate AI summary
-                    ai_summary = self.generate_table_summary(
-                        table, schema_info.relationships
-                    )
-
-                    # Create enhanced table with AI summary
-                    enhanced_table = TableInfo(
-                        name=table.name,
-                        schema_name=table.schema_name,
-                        table_type=table.table_type,
-                        columns=table.columns,
-                        constraints=table.constraints,
-                        indexes=table.indexes,
-                        triggers=table.triggers,
-                        row_count=table.row_count,
-                        size_bytes=table.size_bytes,
-                        created_at=table.created_at,
-                        modified_at=table.modified_at,
-                        description=table.description,
-                        ai_summary=ai_summary,
-                        relationship_summary=self._generate_relationship_summary(
-                            table, schema_info.relationships
-                        ),
-                    )
-                    enhanced_tables.append(enhanced_table)
-
-                except Exception as e:
-                    self.logger.warning(
-                        f"Failed to enhance table {table.name}: {str(e)}"
-                    )
-                    enhanced_tables.append(table)
+            enhanced_tables = asyncio.run(
+                self._generate_enhanced_tables_async(
+                    schema_info.tables, schema_info.relationships
+                )
+            )
 
             # Update schema with enhanced tables
             enhanced_schema = SchemaInfo(
@@ -375,6 +369,49 @@ Found {len(all_indexes)} indexes across all tables:
             return "This table has no foreign key relationships."
 
         return ". ".join(parts) + "."
+
+    async def _generate_enhanced_tables_async(
+        self, tables: list[TableInfo], relationships: list[RelationshipInfo]
+    ) -> list[TableInfo]:
+        """Generate enhanced tables with AI summaries concurrently."""
+
+        async def enhance_single_table(table: TableInfo) -> TableInfo:
+            try:
+                # Generate AI summary asynchronously
+                ai_summary = await self.generate_table_summary_async(
+                    table, relationships
+                )
+
+                # Create enhanced table with AI summary
+                return TableInfo(
+                    name=table.name,
+                    schema_name=table.schema_name,
+                    table_type=table.table_type,
+                    columns=table.columns,
+                    constraints=table.constraints,
+                    indexes=table.indexes,
+                    triggers=table.triggers,
+                    row_count=table.row_count,
+                    size_bytes=table.size_bytes,
+                    created_at=table.created_at,
+                    modified_at=table.modified_at,
+                    description=table.description,
+                    ai_summary=ai_summary,
+                    relationship_summary=self._generate_relationship_summary(
+                        table, relationships
+                    ),
+                )
+
+            except Exception as e:
+                self.logger.warning(f"Failed to enhance table {table.name}: {str(e)}")
+                return table
+
+        # Process all tables concurrently
+        enhanced_tables = await asyncio.gather(
+            *[enhance_single_table(table) for table in tables], return_exceptions=False
+        )
+
+        return list(enhanced_tables)
 
     def _get_database_name(self) -> str:
         """Extract database name from connection string or overview."""
