@@ -1,13 +1,15 @@
 import json
 import os
+from typing import Literal, Union
 
 from pydantic import BaseModel
+from pydantic_ai.providers.google import VertexAILocation
 
 
 class Config(BaseModel):
     model: str
     token_limit: int
-    location: str
+    location: Union[VertexAILocation, Literal["global"]]
     project_id: str
 
 
