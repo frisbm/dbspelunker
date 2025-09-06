@@ -20,6 +20,7 @@ from .models import (
     TableInfo,
     TriggerInfo,
 )
+from .utils import get_database_specific_queries
 
 
 class SQLSafetyValidator:
@@ -125,14 +126,12 @@ def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
 
         # Create basic table info objects for the overview
         basic_tables = [
-            TableInfo(name=table_name, columns=[]) 
-            for table_name in table_names
+            TableInfo(name=table_name, columns=[]) for table_name in table_names
         ]
         basic_views = [
-            TableInfo(name=view_name, columns=[])
-            for view_name in view_names
+            TableInfo(name=view_name, columns=[]) for view_name in view_names
         ]
-        
+
         schemas.append(
             SchemaInfo(
                 name=schema_name,
@@ -233,13 +232,67 @@ def get_table_schema_tool(
             )
         )
 
+    # Get row count and size information
+    row_count = None
+    size_bytes = None
+
+    try:
+        db_type = connector.get_database_type()
+        queries = get_database_specific_queries(db_type)
+
+        if db_type == DatabaseType.POSTGRESQL:
+            # Get row count and size for PostgreSQL
+            try:
+                # Try to get row count with a simple estimate
+                count_query = f"SELECT reltuples::bigint as row_count FROM pg_class WHERE relname = '{table_name}'"
+                count_result = connector.execute_safe_sql(count_query)
+                if count_result and count_result[0]["row_count"] is not None:
+                    row_count = int(count_result[0]["row_count"])
+
+                # Try to get table size
+                full_table_name = (
+                    f"{schema_name}.{table_name}" if schema_name else table_name
+                )
+                size_query = (
+                    f"SELECT pg_total_relation_size('{full_table_name}') as size_bytes"
+                )
+                size_result = connector.execute_safe_sql(size_query)
+                if size_result and size_result[0]["size_bytes"] is not None:
+                    size_bytes = int(size_result[0]["size_bytes"])
+
+            except Exception:
+                pass  # These are optional
+
+        elif db_type == DatabaseType.MYSQL:
+            # Get row count and size for MySQL
+            size_query = f"""
+                SELECT 
+                    data_length + index_length as size_bytes,
+                    table_rows as row_count
+                FROM information_schema.tables
+                WHERE table_name = '{table_name}' 
+                AND table_schema = '{schema_name or "DATABASE()"}'
+            """
+            try:
+                result = connector.execute_safe_sql(size_query)
+                if result:
+                    size_bytes = result[0].get("size_bytes")
+                    row_count = result[0].get("row_count")
+            except Exception:
+                pass
+
+    except Exception:
+        pass  # Size and row count are optional
+
     return TableInfo(
         name=table_name,
         schema_name=schema_name,
         columns=columns,
         constraints=constraints,
         indexes=index_info,
-        triggers=[],
+        triggers=get_triggers_tool(connection_string, table_name, schema_name),
+        row_count=row_count,
+        size_bytes=size_bytes,
     )
 
 
@@ -490,3 +543,90 @@ def _get_mysql_procedures(
         return procedures
     except Exception:
         return []
+
+
+def generate_table_summary_prompt(
+    table_info: TableInfo, relationships: List[RelationshipInfo]
+) -> str:
+    """Generate a prompt for AI to analyze what a table represents."""
+    column_details = []
+    for col in table_info.columns:
+        detail = f"  - {col.name}: {col.data_type.value}"
+        if col.is_primary_key:
+            detail += " (PRIMARY KEY)"
+        if col.is_foreign_key:
+            detail += f" (FK to {col.foreign_key_table}.{col.foreign_key_column})"
+        if not col.is_nullable:
+            detail += " NOT NULL"
+        column_details.append(detail)
+
+    # Find relationships involving this table
+    related_tables = set()
+    table_relationships = []
+    for rel in relationships:
+        if rel.source_table == table_info.name:
+            related_tables.add(rel.target_table)
+            table_relationships.append(
+                f"  - References {rel.target_table}.{rel.target_column} via {rel.source_column}"
+            )
+        elif rel.target_table == table_info.name:
+            related_tables.add(rel.source_table)
+            table_relationships.append(
+                f"  - Referenced by {rel.source_table}.{rel.source_column} via {rel.target_column}"
+            )
+
+    constraint_info = []
+    for constraint in table_info.constraints:
+        constraint_info.append(
+            f"  - {constraint.name}: {constraint.type.value} on {constraint.columns}"
+        )
+
+    index_info = []
+    for index in table_info.indexes:
+        index_info.append(
+            f"  - {index.name}: {index.index_type.value} on {index.columns}"
+        )
+
+    row_info = (
+        f"Estimated rows: {table_info.row_count}"
+        if table_info.row_count
+        else "Row count unknown"
+    )
+    size_info = (
+        f"Size: {table_info.size_bytes} bytes"
+        if table_info.size_bytes
+        else "Size unknown"
+    )
+
+    prompt = f"""
+Analyze this database table and provide a concise summary of what data it represents and its purpose:
+
+Table: {table_info.name}
+Schema: {table_info.schema_name or "default"}
+Type: {table_info.table_type}
+{row_info}
+{size_info}
+
+Columns ({len(table_info.columns)} total):
+{chr(10).join(column_details)}
+
+Constraints ({len(table_info.constraints)} total):
+{chr(10).join(constraint_info) if constraint_info else "  - None"}
+
+Indexes ({len(table_info.indexes)} total):
+{chr(10).join(index_info) if index_info else "  - None"}
+
+Relationships:
+{chr(10).join(table_relationships) if table_relationships else "  - No foreign key relationships"}
+
+Related tables: {", ".join(sorted(related_tables)) if related_tables else "None"}
+
+Please provide:
+1. A 2-3 sentence summary of what this table represents and stores
+2. A brief explanation of how it relates to other tables in the system
+3. Any insights about its likely business purpose based on column names and structure
+
+Keep the response concise and focused on the business/functional purpose rather than technical details.
+    """.strip()
+
+    return prompt

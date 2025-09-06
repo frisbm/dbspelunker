@@ -146,6 +146,8 @@ class TableInfo(BaseModel):
     created_at: Optional[datetime] = None
     modified_at: Optional[datetime] = None
     description: Optional[str] = None
+    ai_summary: Optional[str] = None
+    relationship_summary: Optional[str] = None
 
 
 class RelationshipInfo(BaseModel):
