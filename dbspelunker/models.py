@@ -799,10 +799,7 @@ class DocumentationReport(BaseModel):
             lines.append("")
             for entry in self.table_documentation:
                 # accept common keys
-                title = (
-                    entry.get("table_name")
-                    or "Untitled"
-                )
+                title = entry.get("table_name") or "Untitled"
                 content = (
                     entry.get("content")
                     or entry.get("documentation")

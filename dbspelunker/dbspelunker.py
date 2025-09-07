@@ -21,8 +21,6 @@ from .tools import (
 
 
 class DBSpelunker:
-    """Main orchestrator for AI-driven database documentation and analysis."""
-
     def __init__(self, gemini_model: GeminiModel, db_connection_str: str):
         self.gemini_model = gemini_model
         self.db_connection_str = db_connection_str
@@ -31,7 +29,6 @@ class DBSpelunker:
         self._validate_connection()
 
     def _validate_connection(self) -> None:
-        """Validate that the database connection string is accessible."""
         try:
             overview = get_database_overview_tool(self.db_connection_str)
             self.logger.info(
@@ -42,19 +39,16 @@ class DBSpelunker:
             raise ConnectionError(f"Database connection failed: {str(e)}")
 
     def get_database_overview(self) -> DatabaseOverview:
-        """Get high-level database overview without full analysis."""
         return get_database_overview_tool(self.db_connection_str)
 
     def analyze_table(
         self, table_name: str, schema_name: Optional[str] = None
     ) -> TableInfo:
-        """Analyze a specific table in detail."""
         return get_table_schema_tool(self.db_connection_str, table_name, schema_name)
 
     async def generate_table_summary_async(
         self, table_info: TableInfo, relationships: list[RelationshipInfo]
     ) -> str:
-        """Generate AI-powered summary for a table asynchronously."""
         try:
             prompt = generate_table_summary_prompt(table_info, relationships)
 
@@ -74,7 +68,6 @@ class DBSpelunker:
             return f"Table {table_info.name} contains {len(table_info.columns)} columns and stores data related to the business domain."
 
     def analyze_schema(self, schema_name: str) -> SchemaInfo:
-        """Analyze a complete database schema."""
         # For now, use direct tool calls to avoid async issues
         overview = get_database_overview_tool(self.db_connection_str)
         target_schema = next(
@@ -104,7 +97,6 @@ class DBSpelunker:
         )
 
     def generate_full_documentation(self) -> DocumentationReport:
-        """Generate comprehensive documentation for the entire database."""
         self.logger.info("Starting full database documentation generation...")
 
         # Get basic overview for metadata
@@ -293,7 +285,6 @@ Found {len(all_indexes)} indexes across all tables:
     def _generate_relationship_summary(
         self, table: TableInfo, relationships: list[RelationshipInfo]
     ) -> str:
-        """Generate a summary of table relationships."""
         incoming = []
         outgoing = []
 
@@ -317,8 +308,6 @@ Found {len(all_indexes)} indexes across all tables:
     async def _generate_enhanced_tables_async(
         self, tables: list[TableInfo], relationships: list[RelationshipInfo]
     ) -> list[TableInfo]:
-        """Generate enhanced tables with AI summaries concurrently."""
-
         async def enhance_single_table(table: TableInfo) -> TableInfo:
             try:
                 # Generate AI summary asynchronously
