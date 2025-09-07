@@ -15,24 +15,24 @@ help:
 # run:
 #   Run the main application
 run:
-	uv run main.py
+	uv run --active main.py
 
 .PHONY: fmt
 # fmt:
 #   Format all python code
 fmt:
-	uv run ruff format .
-	uv run ruff check --select I --fix .
-	uv run ruff check . --fix
+	uv run --active ruff format .
+	uv run --active ruff check --select I --fix .
+	uv run --active ruff check . --fix
 
 .PHONY: lint
 # lint:
 #   Lint all python code
 lint:
-	uv run mypy --strict --no-incremental .
+	uv run --active mypy --strict --no-incremental .
 
 .PHONY: test
 # test:
 #   Run all tests
 test:
-	uv run pytest -v .
+	uv run --active pytest -v .
