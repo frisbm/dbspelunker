@@ -16,7 +16,7 @@ uv sync
 2. Create a `config.json` file:
 ```json
 {
-  "db_connection_string": "postgresql://user:password@localhost:5432/database_name",
+  "database_url": "postgresql://user:password@localhost:5432/database_name",
   "project_id": "your-google-cloud-project-id",
   "location": "us-east1",
   "model": "gemini-2.5-flash",

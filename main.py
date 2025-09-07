@@ -12,7 +12,7 @@ def main() -> None:
         gemini_model = GeminiModel(config)
 
         spelunker = DBSpelunker(
-            gemini_model=gemini_model, db_connection_str=config.db_connection_string
+            gemini_model=gemini_model, db_connection_str=config.database_url
         )
 
         print("DBSpelunker initialized successfully!")
