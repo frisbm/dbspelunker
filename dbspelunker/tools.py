@@ -20,6 +20,7 @@ from .models import (
     TableInfo,
     TriggerInfo,
 )
+from .prompt_builder import PromptBuilder, RenderOptions
 
 
 class SQLSafetyValidator:
@@ -549,7 +550,7 @@ def generate_table_summary_prompt(
     """Generate a prompt for AI to analyze what a table represents."""
     column_details = []
     for col in table_info.columns:
-        detail = f"  - {col.name}: {col.data_type.value}"
+        detail = f"{col.name}: {col.data_type.value}"
         if col.is_primary_key:
             detail += " (PRIMARY KEY)"
         if col.is_foreign_key:
@@ -565,25 +566,23 @@ def generate_table_summary_prompt(
         if rel.source_table == table_info.name:
             related_tables.add(rel.target_table)
             table_relationships.append(
-                f"  - References {rel.target_table}.{rel.target_column} via {rel.source_column}"
+                f"References {rel.target_table}.{rel.target_column} via {rel.source_column}"
             )
         elif rel.target_table == table_info.name:
             related_tables.add(rel.source_table)
             table_relationships.append(
-                f"  - Referenced by {rel.source_table}.{rel.source_column} via {rel.target_column}"
+                f"Referenced by {rel.source_table}.{rel.source_column} via {rel.target_column}"
             )
 
     constraint_info = []
     for constraint in table_info.constraints:
         constraint_info.append(
-            f"  - {constraint.name}: {constraint.type.value} on {constraint.columns}"
+            f"{constraint.name}: {constraint.type.value} on {constraint.columns}"
         )
 
     index_info = []
     for index in table_info.indexes:
-        index_info.append(
-            f"  - {index.name}: {index.index_type.value} on {index.columns}"
-        )
+        index_info.append(f"{index.name}: {index.index_type.value} on {index.columns}")
 
     row_info = (
         f"Estimated rows: {table_info.row_count}"
@@ -596,35 +595,74 @@ def generate_table_summary_prompt(
         else "Size unknown"
     )
 
-    prompt = f"""
-Analyze this database table and provide a concise summary of what data it represents and its purpose:
-
-Table: {table_info.name}
+    # Build table metadata
+    table_metadata = f"""Table: {table_info.name}
 Schema: {table_info.schema_name or "default"}
 Type: {table_info.table_type}
 {row_info}
-{size_info}
+{size_info}"""
 
-Columns ({len(table_info.columns)} total):
-{chr(10).join(column_details)}
-
-Constraints ({len(table_info.constraints)} total):
-{chr(10).join(constraint_info) if constraint_info else "  - None"}
-
-Indexes ({len(table_info.indexes)} total):
-{chr(10).join(index_info) if index_info else "  - None"}
-
-Relationships:
-{chr(10).join(table_relationships) if table_relationships else "  - No foreign key relationships"}
-
-Related tables: {", ".join(sorted(related_tables)) if related_tables else "None"}
-
-Please provide:
+    pb = (
+        PromptBuilder()
+        .with_title("Database Table Analysis and Business Purpose Summary")
+        .extend_instructions(
+            [
+                "Analyze the provided database table structure and metadata",
+                "Identify what type of business data this table likely stores",
+                "Determine the table's role within the larger database system",
+                "Focus on business purpose rather than technical implementation details",
+                "Provide insights based on column names, types, and relationships",
+            ]
+        )
+        .extend_rules(
+            [
+                "Base analysis solely on the provided table structure and relationships",
+                "Keep the summary concise but informative (2-3 sentences)",
+                "Explain relationships in business terms, not technical terms",
+                "Avoid speculation beyond what can be reasonably inferred from column names",
+                "Focus on functional purpose rather than technical details",
+            ]
+        )
+        .set_output(
+            """
+Provide a concise analysis with:
 1. A 2-3 sentence summary of what this table represents and stores
-2. A brief explanation of how it relates to other tables in the system
+2. A brief explanation of how it relates to other tables in the system  
 3. Any insights about its likely business purpose based on column names and structure
 
-Keep the response concise and focused on the business/functional purpose rather than technical details.
-    """.strip()
+Keep the response focused on business/functional purpose rather than technical details.
+            """.strip()
+        )
+        .add_supporting_info("Table Metadata", table_metadata, kind="text")
+        .add_supporting_info(
+            f"Columns ({len(table_info.columns)} total)",
+            "\n".join(column_details),
+            kind="text",
+        )
+        .add_supporting_info(
+            f"Constraints ({len(table_info.constraints)} total)",
+            "\n".join(constraint_info) if constraint_info else "None",
+            kind="text",
+        )
+        .add_supporting_info(
+            f"Indexes ({len(table_info.indexes)} total)",
+            "\n".join(index_info) if index_info else "None",
+            kind="text",
+        )
+        .add_supporting_info(
+            "Relationships",
+            "\n".join(table_relationships)
+            if table_relationships
+            else "No foreign key relationships",
+            kind="text",
+        )
+        .add_supporting_info(
+            "Related Tables",
+            ", ".join(sorted(related_tables)) if related_tables else "None",
+            kind="text",
+        )
+        .add_metadata("table_name", table_info.name)
+        .add_metadata("analysis_type", "table_summary")
+    )
 
-    return prompt
+    return pb.render(RenderOptions(include_toc=False))
