@@ -6,7 +6,6 @@ database documentation by analyzing schemas, relationships, indexes, triggers,
 and stored procedures.
 """
 
-from .agents import AgentOrchestrator
 from .dbspelunker import DBSpelunker
 from .genai import GeminiModel
 from .models import (
@@ -35,6 +34,5 @@ __all__ = [
     "IndexInfo",
     "TriggerInfo",
     "StoredProcedureInfo",
-    "AgentOrchestrator",
     "GeminiModel",
 ]

@@ -4,12 +4,6 @@ from typing import Optional
 
 from pydantic_ai import Agent
 
-from .agents import (
-    create_detail_analyzer_agent,
-    create_documentation_agent,
-    create_initiator_agent,
-    create_schema_explorer_agent,
-)
 from .genai import GeminiModel
 from .models import (
     DatabaseOverview,
@@ -318,34 +312,6 @@ Found {len(all_indexes)} indexes across all tables:
         self.logger.info("Database documentation generation completed")
         return result
 
-    def create_initiator_agent(self) -> Agent:
-        """Create the initiator agent for workflow orchestration."""
-        return create_initiator_agent(
-            model=self.gemini_model.get_model(temperature=0.3),
-            connection_string=self.db_connection_str,
-        )
-
-    def create_schema_explorer_agent(self) -> Agent:
-        """Create the schema explorer agent for detailed table analysis."""
-        return create_schema_explorer_agent(
-            model=self.gemini_model.get_model(temperature=0.2),
-            connection_string=self.db_connection_str,
-        )
-
-    def create_detail_analyzer_agent(self) -> Agent:
-        """Create the detail analyzer agent for advanced features."""
-        return create_detail_analyzer_agent(
-            model=self.gemini_model.get_model(temperature=0.2),
-            connection_string=self.db_connection_str,
-        )
-
-    def create_documentation_agent(self) -> Agent:
-        """Create the documentation generator agent."""
-        return create_documentation_agent(
-            model=self.gemini_model.get_model(temperature=0.1),
-            connection_string=self.db_connection_str,
-        )
-
     def _generate_relationship_summary(
         self, table: TableInfo, relationships: list[RelationshipInfo]
     ) -> str:
@@ -412,11 +378,3 @@ Found {len(all_indexes)} indexes across all tables:
         )
 
         return list(enhanced_tables)
-
-    def _get_database_name(self) -> str:
-        """Extract database name from connection string or overview."""
-        try:
-            overview = self.get_database_overview()
-            return overview.name
-        except Exception:
-            return "unknown_database"
