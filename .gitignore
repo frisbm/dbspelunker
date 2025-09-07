@@ -85,3 +85,4 @@ venv/
 **/__pycache__/
 **/.venv
 config.json
+output

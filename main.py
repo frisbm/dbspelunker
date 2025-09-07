@@ -1,4 +1,5 @@
 from datetime import datetime
+from pathlib import Path
 
 from config import load_config
 from dbspelunker import DBSpelunker
@@ -223,8 +224,9 @@ def main() -> None:
         print("\nFormatting documentation as markdown...")
         markdown_content = format_markdown_documentation(documentation)
 
+        Path("output").mkdir(parents=True, exist_ok=True)
         # Save to markdown file
-        with open("database_documentation.md", "w") as f:
+        with open("output/database_documentation.md", "w") as f:
             f.write(markdown_content)
 
         print("\nComplete documentation generated successfully!")
