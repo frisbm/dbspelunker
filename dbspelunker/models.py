@@ -1,11 +1,11 @@
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
 
-class DatabaseType(str, Enum):
+class DatabaseType(StrEnum):
     POSTGRESQL = "postgresql"
     MYSQL = "mysql"
     SQLITE = "sqlite"
@@ -13,7 +13,7 @@ class DatabaseType(str, Enum):
     ORACLE = "oracle"
 
 
-class ColumnType(str, Enum):
+class ColumnType(StrEnum):
     INTEGER = "integer"
     BIGINT = "bigint"
     SMALLINT = "smallint"
@@ -37,7 +37,7 @@ class ColumnType(str, Enum):
     OTHER = "other"
 
 
-class IndexType(str, Enum):
+class IndexType(StrEnum):
     PRIMARY = "primary"
     UNIQUE = "unique"
     INDEX = "index"
@@ -48,20 +48,20 @@ class IndexType(str, Enum):
     FULLTEXT = "fulltext"
 
 
-class TriggerEvent(str, Enum):
+class TriggerEvent(StrEnum):
     INSERT = "insert"
     UPDATE = "update"
     DELETE = "delete"
     TRUNCATE = "truncate"
 
 
-class TriggerTiming(str, Enum):
+class TriggerTiming(StrEnum):
     BEFORE = "before"
     AFTER = "after"
     INSTEAD_OF = "instead_of"
 
 
-class ConstraintType(str, Enum):
+class ConstraintType(StrEnum):
     PRIMARY_KEY = "primary_key"
     FOREIGN_KEY = "foreign_key"
     UNIQUE = "unique"
