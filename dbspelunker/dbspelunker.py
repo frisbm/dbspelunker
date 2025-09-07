@@ -51,28 +51,6 @@ class DBSpelunker:
         """Analyze a specific table in detail."""
         return get_table_schema_tool(self.db_connection_str, table_name, schema_name)
 
-    def generate_table_summary(
-        self, table_info: TableInfo, relationships: list[RelationshipInfo]
-    ) -> str:
-        """Generate AI-powered summary for a table."""
-        try:
-            prompt = generate_table_summary_prompt(table_info, relationships)
-
-            # Create a simple agent for text generation
-            summary_agent = Agent(
-                model=self.gemini_model.get_model(temperature=0.3), output_type=str
-            )
-
-            response = summary_agent.run_sync(prompt)
-            return (
-                str(response.output) if hasattr(response, "output") else str(response)
-            )
-        except Exception as e:
-            self.logger.warning(
-                f"Failed to generate AI summary for table {table_info.name}: {str(e)}"
-            )
-            return f"Table {table_info.name} contains {len(table_info.columns)} columns and stores data related to the business domain."
-
     async def generate_table_summary_async(
         self, table_info: TableInfo, relationships: list[RelationshipInfo]
     ) -> str:

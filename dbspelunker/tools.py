@@ -97,7 +97,6 @@ class DatabaseConnector:
 
 
 def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
-    """Get high-level database metadata including schemas, tables, and basic statistics."""
     connector = DatabaseConnector(connection_string)
     engine = connector.get_engine()
     inspector = inspect(engine)
@@ -154,16 +153,9 @@ def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
     )
 
 
-def execute_readonly_sql_tool(connection_string: str, sql: str) -> List[Dict[str, Any]]:
-    """Execute a READ-ONLY SQL query safely against the database."""
-    connector = DatabaseConnector(connection_string)
-    return connector.execute_safe_sql(sql)
-
-
 def get_table_schema_tool(
     connection_string: str, table_name: str, schema_name: Optional[str] = None
 ) -> TableInfo:
-    """Get detailed schema information for a specific table."""
     connector = DatabaseConnector(connection_string)
     engine = connector.get_engine()
     inspector = inspect(engine)
@@ -359,7 +351,6 @@ def get_indexes_tool(
 def get_triggers_tool(
     connection_string: str, table_name: str, schema_name: Optional[str] = None
 ) -> List[TriggerInfo]:
-    """Get trigger information for a table (implementation varies by database type)."""
     connector = DatabaseConnector(connection_string)
     db_type = connector.get_database_type()
 
@@ -374,7 +365,6 @@ def get_triggers_tool(
 def get_stored_procedures_tool(
     connection_string: str, schema_name: Optional[str] = None
 ) -> List[StoredProcedureInfo]:
-    """Get stored procedure information (implementation varies by database type)."""
     connector = DatabaseConnector(connection_string)
     db_type = connector.get_database_type()
 
@@ -387,7 +377,6 @@ def get_stored_procedures_tool(
 
 
 def _map_column_type(type_str: str) -> ColumnType:
-    """Map database-specific column types to our enum."""
     type_lower = type_str.lower()
 
     if "int" in type_lower:
@@ -429,7 +418,6 @@ def _map_column_type(type_str: str) -> ColumnType:
 def _get_postgresql_triggers(
     connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
 ) -> List[TriggerInfo]:
-    """Get PostgreSQL triggers for a table."""
     schema_filter = f"AND schemaname = '{schema_name}'" if schema_name else ""
     sql = f"""
     SELECT trigger_name, event_manipulation, action_timing, action_statement
@@ -460,7 +448,6 @@ def _get_postgresql_triggers(
 def _get_mysql_triggers(
     connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
 ) -> List[TriggerInfo]:
-    """Get MySQL triggers for a table."""
     sql = f"SHOW TRIGGERS LIKE '{table_name}'"
 
     try:
@@ -486,7 +473,6 @@ def _get_mysql_triggers(
 def _get_postgresql_functions(
     connector: DatabaseConnector, schema_name: Optional[str]
 ) -> List[StoredProcedureInfo]:
-    """Get PostgreSQL functions/procedures."""
     schema_filter = f"AND n.nspname = '{schema_name}'" if schema_name else ""
     sql = f"""
     SELECT p.proname as name, n.nspname as schema_name, pg_get_functiondef(p.oid) as definition
@@ -517,7 +503,6 @@ def _get_postgresql_functions(
 def _get_mysql_procedures(
     connector: DatabaseConnector, schema_name: Optional[str]
 ) -> List[StoredProcedureInfo]:
-    """Get MySQL stored procedures."""
     schema_filter = f"AND ROUTINE_SCHEMA = '{schema_name}'" if schema_name else ""
     sql = f"""
     SELECT ROUTINE_NAME, ROUTINE_SCHEMA, ROUTINE_DEFINITION, ROUTINE_TYPE
@@ -547,7 +532,6 @@ def _get_mysql_procedures(
 def generate_table_summary_prompt(
     table_info: TableInfo, relationships: List[RelationshipInfo]
 ) -> str:
-    """Generate a prompt for AI to analyze what a table represents."""
     column_details = []
     for col in table_info.columns:
         detail = f"{col.name}: {col.data_type.value}"
