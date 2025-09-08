@@ -15,10 +15,10 @@ class GeminiModel:
             location=config.location,
         )
         self.__token_limit = config.token_limit
-        self.top_p = 0.50
-        self.max_output_tokens = 65535
-        self.thinking_budget = 32768
-        self.maximum_remote_calls = 10
+        self.top_p = config.top_p
+        self.max_output_tokens = config.max_output_tokens
+        self.thinking_budget = config.thinking_budget
+        self.maximum_remote_calls = config.maximum_remote_calls
         self.seed: Optional[int] = None
 
     def get_model(self, temperature: float = 1.0) -> GoogleModel:

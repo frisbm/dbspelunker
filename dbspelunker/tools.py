@@ -52,12 +52,10 @@ def format_sql(sql: str) -> str:
         )
 
         # Clean up any excessive whitespace while preserving structure
-        lines = []
+        lines: List[str] = []
         for line in formatted.split("\n"):
             stripped = line.rstrip()
-            if (
-                stripped or lines
-            ):  # Keep non-empty lines and preserve blank line structure
+            if stripped:
                 lines.append(stripped)
 
         # Remove trailing empty lines
@@ -1003,9 +1001,7 @@ Keep the response focused on business purpose and impact rather than technical d
         )
         .add_supporting_info(
             "Trigger Definition",
-            format_sql(
-                trigger_info.definition
-            ),
+            format_sql(trigger_info.definition),
             kind="code",
         )
         .add_metadata("trigger_name", trigger_info.name)

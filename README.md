@@ -20,7 +20,12 @@ uv sync
   "project_id": "your-google-cloud-project-id",
   "location": "us-east1",
   "model": "gemini-2.5-flash",
-  "token_limit": 1000000
+  "token_limit": 1048576,
+  "thinking_budget": 32768,
+  "maximum_remote_calls": 10,
+  "max_concurrent_requests": 65535,
+  "max_output_tokens": 65535,
+  "top_p": 0.5
 }
 ```
 

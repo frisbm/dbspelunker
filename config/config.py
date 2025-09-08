@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Literal, Union
+from typing import Literal, Optional, Union
 
 from pydantic import BaseModel
 from pydantic_ai.providers.google import VertexAILocation
@@ -11,6 +11,10 @@ class Config(BaseModel):
     token_limit: int
     location: Union[VertexAILocation, Literal["global"]]
     project_id: str
+    thinking_budget: Optional[int]
+    maximum_remote_calls: int
+    max_output_tokens: int
+    top_p: float
     database_url: str
 
 
