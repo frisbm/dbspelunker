@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-ai-slim[evals,google]>=1.0.1",
     "pydantic-graph>=1.0.1",
     "sqlalchemy>=2.0.43",
+    "sqlparse>=0.5.3",
 ]
 
 [dependency-groups]
