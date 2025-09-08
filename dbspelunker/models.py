@@ -300,6 +300,10 @@ class DocumentationReport(BaseModel):
             return "```sql\n\n```"
 
         def _h(level: int, text: str) -> str:
+            if level < 1:
+                level = 1
+            elif level > 6:
+                level = 6
             return f"{'#' * level} {text}".strip()
 
         # ----------------------------
@@ -567,7 +571,7 @@ class DocumentationReport(BaseModel):
                         # Include AI summaries and definitions below table for readability
                         for trg in t.triggers:
                             lines.append("")
-                            lines.append(_h(7, f"Trigger: {trg.name}"))
+                            lines.append(_h(6, f"Trigger: {trg.name}"))
 
                             # Add AI summary if available
                             if (trg.ai_summary or "").strip():
