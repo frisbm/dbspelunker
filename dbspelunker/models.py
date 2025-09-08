@@ -118,6 +118,7 @@ class TriggerInfo(BaseModel):
     definition: str
     is_enabled: bool = True
     description: Optional[str] = None
+    ai_summary: Optional[str] = None
 
 
 class StoredProcedureInfo(BaseModel):
@@ -132,6 +133,7 @@ class StoredProcedureInfo(BaseModel):
     created_at: Optional[datetime] = None
     modified_at: Optional[datetime] = None
     description: Optional[str] = None
+    ai_summary: Optional[str] = None
 
 
 class TableInfo(BaseModel):
@@ -289,7 +291,13 @@ class DocumentationReport(BaseModel):
             if sql is None:
                 return ""
             s = sql.strip()
-            return f"```sql\n{s}\n```"
+            if s:
+                # Import and use the SQL formatter
+                from .tools import format_sql
+
+                formatted_sql = format_sql(s)
+                return f"```sql\n{formatted_sql}\n```"
+            return "```sql\n\n```"
 
         def _h(level: int, text: str) -> str:
             return f"{'#' * level} {text}".strip()
@@ -556,11 +564,22 @@ class DocumentationReport(BaseModel):
                                 ]
                             )
                         lines.append(_md_table(trg_headers, trg_rows))
-                        # Include (truncated) definitions below table for readability
+                        # Include AI summaries and definitions below table for readability
                         for trg in t.triggers:
+                            lines.append("")
+                            lines.append(_h(7, f"Trigger: {trg.name}"))
+
+                            # Add AI summary if available
+                            if (trg.ai_summary or "").strip():
+                                lines.append("")
+                                lines.append(
+                                    f"> **AI Analysis:** {(trg.ai_summary or '').strip()}"
+                                )
+
+                            # Add definition
                             if trg.definition:
                                 lines.append("")
-                                lines.append(_h(7, f"Trigger Definition: {trg.name}"))
+                                lines.append("**Definition:**")
                                 lines.append(_truncate_block(trg.definition))
 
                     # Relationships touching this table (from schema.relationships)
@@ -658,15 +677,29 @@ class DocumentationReport(BaseModel):
                         ]
                     )
                 lines.append(_md_table(sp_headers, sp_rows))
-                # Definitions
+                # AI summaries and definitions
                 for sp in schema.stored_procedures:
+                    lines.append("")
+                    lines.append(_h(5, f"Procedure: {sp.name}"))
+
+                    # Add AI summary if available
+                    if (sp.ai_summary or "").strip():
+                        lines.append("")
+                        lines.append(
+                            f"> **AI Analysis:** {(sp.ai_summary or '').strip()}"
+                        )
+
+                    # Add definition
                     if sp.definition:
                         lines.append("")
-                        lines.append(_h(5, f"Procedure Definition: {sp.name}"))
+                        lines.append("**Definition:**")
                         lines.append(_truncate_block(sp.definition))
-                        if (sp.description or "").strip():
-                            lines.append("")
-                            lines.append((sp.description or "").strip())
+
+                    # Add description if available
+                    if (sp.description or "").strip():
+                        lines.append("")
+                        lines.append("**Description:**")
+                        lines.append((sp.description or "").strip())
                 lines.append("")
 
         # Relationships (global)

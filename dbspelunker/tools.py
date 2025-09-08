@@ -1,6 +1,7 @@
 import re
 from typing import Any, Dict, List, Optional
 
+import sqlparse
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -21,6 +22,53 @@ from .models import (
     TriggerInfo,
 )
 from .prompt_builder import PromptBuilder, RenderOptions
+
+
+def format_sql(sql: str) -> str:
+    """
+    Format SQL code for better readability in documentation.
+
+    Args:
+        sql: Raw SQL string to format
+
+    Returns:
+        Formatted SQL string with proper indentation and capitalization
+    """
+    if not sql or not sql.strip():
+        return sql
+
+    try:
+        # Use sqlparse to format the SQL with nice options
+        formatted = sqlparse.format(
+            sql,
+            reindent=True,  # Add proper indentation
+            keyword_case="upper",  # Uppercase SQL keywords
+            identifier_case="lower",  # Lowercase identifiers
+            strip_comments=False,  # Keep comments
+            use_space_around_operators=True,  # Add spaces around operators
+            indent_width=2,  # Use 2-space indentation
+            indent_after_first=True,  # Indent after first line
+            reindent_aligned=True,  # Align continued lines
+        )
+
+        # Clean up any excessive whitespace while preserving structure
+        lines = []
+        for line in formatted.split("\n"):
+            stripped = line.rstrip()
+            if (
+                stripped or lines
+            ):  # Keep non-empty lines and preserve blank line structure
+                lines.append(stripped)
+
+        # Remove trailing empty lines
+        while lines and not lines[-1]:
+            lines.pop()
+
+        return "\n".join(lines)
+
+    except Exception:
+        # If formatting fails, return original SQL
+        return sql.strip()
 
 
 class SQLSafetyValidator:
@@ -876,6 +924,172 @@ Keep the response focused on business/functional purpose rather than technical d
         )
         .add_metadata("table_name", table_info.name)
         .add_metadata("analysis_type", "table_summary")
+    )
+
+    return pb.render(RenderOptions(include_toc=False))
+
+
+def generate_trigger_summary_prompt(
+    trigger_info: TriggerInfo, table_info: TableInfo
+) -> str:
+    """Generate AI prompt for analyzing a database trigger."""
+
+    # Extract trigger details
+    trigger_metadata = f"""Trigger: {trigger_info.name}
+Table: {trigger_info.table_name}
+Event: {trigger_info.event.value.upper()}
+Timing: {trigger_info.timing.value.upper()}
+Enabled: {"Yes" if trigger_info.is_enabled else "No"}
+Language: Detected from definition"""
+
+    # Extract table context
+    table_context = f"""Table: {table_info.name}
+Schema: {table_info.schema_name or "default"}
+Type: {table_info.table_type}
+Columns: {len(table_info.columns)} total
+Primary Keys: {[col.name for col in table_info.columns if col.is_primary_key]}
+Foreign Keys: {[col.name for col in table_info.columns if col.is_foreign_key]}"""
+
+    # Extract key columns for context
+    key_columns = []
+    for col in table_info.columns[:10]:  # Limit to first 10 columns
+        detail = f"{col.name}: {col.data_type.value}"
+        if col.is_primary_key:
+            detail += " (PK)"
+        if col.is_foreign_key:
+            detail += " (FK)"
+        if not col.is_nullable:
+            detail += " NOT NULL"
+        key_columns.append(detail)
+
+    pb = (
+        PromptBuilder()
+        .with_title("Database Trigger Analysis and Business Purpose Summary")
+        .extend_instructions(
+            [
+                "Analyze the provided database trigger and its context",
+                "Identify the business purpose and logic of this trigger",
+                "Determine what business rules or automation this trigger implements",
+                "Explain the trigger's role in maintaining data integrity or business processes",
+                "Focus on business value rather than technical implementation details",
+            ]
+        )
+        .extend_rules(
+            [
+                "Base analysis solely on the trigger definition and table structure",
+                "Keep the summary concise but informative (2-3 sentences)",
+                "Explain the trigger's purpose in business terms",
+                "Identify potential performance implications if relevant",
+                "Avoid speculation beyond what can be reasonably inferred",
+                "Focus on what the trigger accomplishes, not how it's coded",
+            ]
+        )
+        .set_output(
+            """
+Provide a concise analysis with:
+1. A 2-3 sentence summary of what this trigger does and why it exists
+2. The business rule or process it implements
+3. Any notable implications for data consistency, auditing, or performance
+
+Keep the response focused on business purpose and impact rather than technical details.
+            """.strip()
+        )
+        .add_supporting_info("Trigger Metadata", trigger_metadata, kind="text")
+        .add_supporting_info("Table Context", table_context, kind="text")
+        .add_supporting_info(
+            f"Key Columns ({len(key_columns)} shown)",
+            "\n".join(key_columns),
+            kind="text",
+        )
+        .add_supporting_info(
+            "Trigger Definition",
+            format_sql(
+                trigger_info.definition
+            ),
+            kind="code",
+        )
+        .add_metadata("trigger_name", trigger_info.name)
+        .add_metadata("table_name", trigger_info.table_name)
+        .add_metadata("analysis_type", "trigger_summary")
+    )
+
+    return pb.render(RenderOptions(include_toc=False))
+
+
+def generate_stored_procedure_summary_prompt(
+    procedure_info: StoredProcedureInfo, schema_tables: List[TableInfo]
+) -> str:
+    """Generate AI prompt for analyzing a stored procedure."""
+
+    # Extract procedure details
+    parameters_text = []
+    for param in procedure_info.parameters:
+        param_detail = f"{param.get('name', 'unknown')}: {param.get('type', 'unknown')}"
+        if param.get("mode"):
+            param_detail += f" ({param['mode']})"
+        parameters_text.append(param_detail)
+
+    procedure_metadata = f"""Procedure: {procedure_info.name}
+Schema: {procedure_info.schema_name or "default"}
+Language: {procedure_info.language or "sql"}
+Return Type: {procedure_info.return_type or "void"}
+Parameters: {len(procedure_info.parameters)} total
+Deterministic: {"Yes" if procedure_info.is_deterministic else "No"}
+Security: {procedure_info.security_type or "INVOKER"}"""
+
+    # Schema context - list of available tables
+    schema_context = f"""Schema Tables ({len(schema_tables)} total):
+{", ".join([table.name for table in schema_tables[:20]])}"""
+    if len(schema_tables) > 20:
+        schema_context += "..."
+
+    pb = (
+        PromptBuilder()
+        .with_title("Database Stored Procedure Analysis and Business Purpose Summary")
+        .extend_instructions(
+            [
+                "Analyze the provided stored procedure and its database context",
+                "Identify the business function and purpose of this procedure",
+                "Determine what business process or operation this procedure performs",
+                "Explain the procedure's role in the application's business logic",
+                "Focus on business value and functional purpose rather than code implementation",
+            ]
+        )
+        .extend_rules(
+            [
+                "Base analysis solely on the procedure definition, parameters, and schema context",
+                "Keep the summary concise but informative (2-3 sentences)",
+                "Explain the procedure's business function in clear terms",
+                "Identify the type of operation (data processing, reporting, validation, etc.)",
+                "Avoid speculation beyond what can be reasonably inferred from the code",
+                "Focus on what the procedure accomplishes for the business",
+            ]
+        )
+        .set_output(
+            """
+Provide a concise analysis with:
+1. A 2-3 sentence summary of what this procedure does and its business purpose
+2. The type of operation it performs (e.g., data transformation, business calculation, reporting)
+3. Any insights about its role in the application's business processes
+
+Keep the response focused on business functionality rather than technical implementation.
+            """.strip()
+        )
+        .add_supporting_info("Procedure Metadata", procedure_metadata, kind="text")
+        .add_supporting_info("Schema Context", schema_context, kind="text")
+        .add_supporting_info(
+            f"Parameters ({len(procedure_info.parameters)} total)",
+            "\n".join(parameters_text) if parameters_text else "None",
+            kind="text",
+        )
+        .add_supporting_info(
+            "Procedure Definition",
+            format_sql(procedure_info.definition),
+            kind="code",
+        )
+        .add_metadata("procedure_name", procedure_info.name)
+        .add_metadata("schema_name", procedure_info.schema_name or "default")
+        .add_metadata("analysis_type", "procedure_summary")
     )
 
     return pb.render(RenderOptions(include_toc=False))

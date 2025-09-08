@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Optional
+from typing import List, Optional
 
 from pydantic_ai import Agent
 
@@ -10,7 +10,9 @@ from .models import (
     DocumentationReport,
     RelationshipInfo,
     SchemaInfo,
+    StoredProcedureInfo,
     TableInfo,
+    TriggerInfo,
 )
 from .tools import (
     analyze_relationships_tool,
@@ -67,6 +69,54 @@ class DBSpelunker:
             )
             return f"Table {table_info.name} contains {len(table_info.columns)} columns and stores data related to the business domain."
 
+    async def generate_trigger_summary_async(
+        self, trigger_info: TriggerInfo, table_info: TableInfo
+    ) -> str:
+        try:
+            from .tools import generate_trigger_summary_prompt
+
+            prompt = generate_trigger_summary_prompt(trigger_info, table_info)
+
+            # Create a simple agent for text generation
+            summary_agent = Agent(
+                model=self.gemini_model.get_model(temperature=0.3), output_type=str
+            )
+
+            response = await summary_agent.run(prompt)
+            return (
+                str(response.output) if hasattr(response, "output") else str(response)
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to generate AI summary for trigger {trigger_info.name}: {str(e)}"
+            )
+            return f"Trigger {trigger_info.name} implements {trigger_info.timing.value} {trigger_info.event.value} logic for {trigger_info.table_name}."
+
+    async def generate_stored_procedure_summary_async(
+        self, procedure_info: StoredProcedureInfo, schema_tables: List[TableInfo]
+    ) -> str:
+        try:
+            from .tools import generate_stored_procedure_summary_prompt
+
+            prompt = generate_stored_procedure_summary_prompt(
+                procedure_info, schema_tables
+            )
+
+            # Create a simple agent for text generation
+            summary_agent = Agent(
+                model=self.gemini_model.get_model(temperature=0.3), output_type=str
+            )
+
+            response = await summary_agent.run(prompt)
+            return (
+                str(response.output) if hasattr(response, "output") else str(response)
+            )
+        except Exception as e:
+            self.logger.warning(
+                f"Failed to generate AI summary for procedure {procedure_info.name}: {str(e)}"
+            )
+            return f"Procedure {procedure_info.name} performs {procedure_info.language or 'SQL'} operations with {len(procedure_info.parameters)} parameters."
+
     def analyze_schema(self, schema_name: str) -> SchemaInfo:
         # For now, use direct tool calls to avoid async issues
         overview = get_database_overview_tool(self.db_connection_str)
@@ -116,22 +166,32 @@ class DBSpelunker:
             self.logger.info(f"Analyzing schema: {schema.name}")
             schema_info = self.analyze_schema(schema.name)
 
-            # Generate AI summaries for each table asynchronously
+            # Generate AI summaries for tables and stored procedures asynchronously
             self.logger.info(
-                f"Generating AI summaries for {len(schema_info.tables)} tables concurrently..."
-            )
-            enhanced_tables = asyncio.run(
-                self._generate_enhanced_tables_async(
-                    schema_info.tables, schema_info.relationships
-                )
+                f"Generating AI summaries for {len(schema_info.tables)} tables and {len(schema_info.stored_procedures)} procedures concurrently..."
             )
 
-            # Update schema with enhanced tables
+            # Run both table and procedure enhancements concurrently
+            async def run_enhancements() -> tuple[
+                List[TableInfo], List[StoredProcedureInfo]
+            ]:
+                return await asyncio.gather(
+                    self._generate_enhanced_tables_async(
+                        schema_info.tables, schema_info.relationships
+                    ),
+                    self._generate_enhanced_stored_procedures_async(
+                        schema_info.stored_procedures, schema_info.tables
+                    ),
+                )
+
+            enhanced_tables, enhanced_procedures = asyncio.run(run_enhancements())
+
+            # Update schema with enhanced tables and procedures
             enhanced_schema = SchemaInfo(
                 name=schema_info.name,
                 tables=enhanced_tables,
                 views=schema_info.views,
-                stored_procedures=schema_info.stored_procedures,
+                stored_procedures=enhanced_procedures,
                 relationships=schema_info.relationships,
                 description=schema_info.description,
             )
@@ -323,7 +383,12 @@ Found {len(all_indexes)} indexes across all tables:
                     table, relationships
                 )
 
-                # Create enhanced table with AI summary
+                # Enhance triggers with AI summaries
+                enhanced_triggers = await self._generate_enhanced_triggers_async(
+                    table.triggers, table
+                )
+
+                # Create enhanced table with AI summary and enhanced triggers
                 return TableInfo(
                     name=table.name,
                     schema_name=table.schema_name,
@@ -331,7 +396,7 @@ Found {len(all_indexes)} indexes across all tables:
                     columns=table.columns,
                     constraints=table.constraints,
                     indexes=table.indexes,
-                    triggers=table.triggers,
+                    triggers=enhanced_triggers,
                     row_count=table.row_count,
                     size_bytes=table.size_bytes,
                     created_at=table.created_at,
@@ -353,3 +418,91 @@ Found {len(all_indexes)} indexes across all tables:
         )
 
         return list(enhanced_tables)
+
+    async def _generate_enhanced_triggers_async(
+        self, triggers: list[TriggerInfo], table_info: TableInfo
+    ) -> list[TriggerInfo]:
+        """Generate AI summaries for triggers asynchronously."""
+
+        async def enhance_single_trigger(trigger: TriggerInfo) -> TriggerInfo:
+            try:
+                # Generate AI summary for the trigger
+                ai_summary = await self.generate_trigger_summary_async(
+                    trigger, table_info
+                )
+
+                # Create enhanced trigger with AI summary
+                return TriggerInfo(
+                    name=trigger.name,
+                    table_name=trigger.table_name,
+                    event=trigger.event,
+                    timing=trigger.timing,
+                    definition=trigger.definition,
+                    is_enabled=trigger.is_enabled,
+                    description=trigger.description,
+                    ai_summary=ai_summary,
+                )
+
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to enhance trigger {trigger.name}: {str(e)}"
+                )
+                return trigger
+
+        if not triggers:
+            return []
+
+        # Process all triggers concurrently
+        enhanced_triggers = await asyncio.gather(
+            *[enhance_single_trigger(trigger) for trigger in triggers],
+            return_exceptions=False,
+        )
+
+        return list(enhanced_triggers)
+
+    async def _generate_enhanced_stored_procedures_async(
+        self, procedures: list[StoredProcedureInfo], schema_tables: list[TableInfo]
+    ) -> list[StoredProcedureInfo]:
+        """Generate AI summaries for stored procedures asynchronously."""
+
+        async def enhance_single_procedure(
+            procedure: StoredProcedureInfo,
+        ) -> StoredProcedureInfo:
+            try:
+                # Generate AI summary for the procedure
+                ai_summary = await self.generate_stored_procedure_summary_async(
+                    procedure, schema_tables
+                )
+
+                # Create enhanced procedure with AI summary
+                return StoredProcedureInfo(
+                    name=procedure.name,
+                    schema_name=procedure.schema_name,
+                    parameters=procedure.parameters,
+                    return_type=procedure.return_type,
+                    definition=procedure.definition,
+                    language=procedure.language,
+                    is_deterministic=procedure.is_deterministic,
+                    security_type=procedure.security_type,
+                    created_at=procedure.created_at,
+                    modified_at=procedure.modified_at,
+                    description=procedure.description,
+                    ai_summary=ai_summary,
+                )
+
+            except Exception as e:
+                self.logger.warning(
+                    f"Failed to enhance procedure {procedure.name}: {str(e)}"
+                )
+                return procedure
+
+        if not procedures:
+            return []
+
+        # Process all procedures concurrently
+        enhanced_procedures = await asyncio.gather(
+            *[enhance_single_procedure(procedure) for procedure in procedures],
+            return_exceptions=False,
+        )
+
+        return list(enhanced_procedures)
