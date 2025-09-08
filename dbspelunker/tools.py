@@ -107,6 +107,9 @@ def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
     schemas = []
     total_tables = 0
     total_views = 0
+    total_stored_procedures = 0
+    total_triggers = 0
+    total_indexes = 0
 
     for schema_name in schema_names:
         if schema_name in [
@@ -123,6 +126,27 @@ def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
         total_tables += len(table_names)
         total_views += len(view_names)
 
+        # Get stored procedures for this schema
+        stored_procedures = get_stored_procedures_tool(connection_string, schema_name)
+        total_stored_procedures += len(stored_procedures)
+
+        # Count triggers and indexes across all tables in this schema
+        schema_triggers = 0
+        schema_indexes = 0
+        for table_name in table_names:
+            # Get triggers for this table
+            table_triggers = get_triggers_tool(
+                connection_string, table_name, schema_name
+            )
+            schema_triggers += len(table_triggers)
+
+            # Get indexes for this table
+            table_indexes = inspector.get_indexes(table_name, schema=schema_name)
+            schema_indexes += len(table_indexes)
+
+        total_triggers += schema_triggers
+        total_indexes += schema_indexes
+
         # Create basic table info objects for the overview
         basic_tables = [
             TableInfo(name=table_name, columns=[]) for table_name in table_names
@@ -136,7 +160,7 @@ def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
                 name=schema_name,
                 tables=basic_tables,
                 views=basic_views,
-                stored_procedures=[],
+                stored_procedures=stored_procedures,
                 relationships=[],
             )
         )
@@ -147,9 +171,9 @@ def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
         schemas=schemas,
         total_tables=total_tables,
         total_views=total_views,
-        total_stored_procedures=0,
-        total_triggers=0,
-        total_indexes=0,
+        total_stored_procedures=total_stored_procedures,
+        total_triggers=total_triggers,
+        total_indexes=total_indexes,
     )
 
 
@@ -418,6 +442,92 @@ def _map_column_type(type_str: str) -> ColumnType:
 def _get_postgresql_triggers(
     connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
 ) -> List[TriggerInfo]:
+    # Use a more comprehensive query that gets trigger details from pg_trigger
+    schema_condition = f"AND n.nspname = '{schema_name}'" if schema_name else ""
+    sql = f"""
+    SELECT 
+        t.tgname as trigger_name,
+        c.relname as table_name,
+        n.nspname as schema_name,
+        p.proname as function_name,
+        CASE 
+            WHEN t.tgtype & 2 != 0 THEN 'before'
+            WHEN t.tgtype & 64 != 0 THEN 'instead_of'
+            ELSE 'after'
+        END as timing,
+        CASE 
+            WHEN t.tgtype & 4 != 0 THEN 'insert'
+            WHEN t.tgtype & 8 != 0 THEN 'delete'
+            WHEN t.tgtype & 16 != 0 THEN 'update'
+            WHEN t.tgtype & 32 != 0 THEN 'truncate'
+            ELSE 'unknown'
+        END as event,
+        CASE t.tgenabled
+            WHEN 'O' THEN true
+            WHEN 'D' THEN false
+            WHEN 'R' THEN true
+            WHEN 'A' THEN true
+            ELSE false
+        END as is_enabled,
+        pg_get_triggerdef(t.oid) as definition
+    FROM pg_trigger t
+    JOIN pg_class c ON t.tgrelid = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    JOIN pg_proc p ON t.tgfoid = p.oid
+    WHERE c.relname = '{table_name}' 
+    AND NOT t.tgisinternal
+    {schema_condition}
+    ORDER BY t.tgname
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        triggers = []
+
+        for row in results:
+            # Import the enums at the function level to avoid circular imports
+            from .models import TriggerEvent, TriggerTiming
+
+            # Map event string to enum
+            event_str = row["event"].lower()
+            try:
+                event = TriggerEvent(event_str)
+            except ValueError:
+                # Default to INSERT if we can't map the event
+                event = TriggerEvent.INSERT
+
+            # Map timing string to enum
+            timing_str = row["timing"].lower()
+            try:
+                timing = TriggerTiming(timing_str)
+            except ValueError:
+                # Default to AFTER if we can't map the timing
+                timing = TriggerTiming.AFTER
+
+            triggers.append(
+                TriggerInfo(
+                    name=row["trigger_name"],
+                    table_name=table_name,
+                    event=event,
+                    timing=timing,
+                    definition=row["definition"] or "",
+                    is_enabled=row["is_enabled"],
+                    description=f"Trigger function: {row['function_name']}",
+                )
+            )
+
+        return triggers
+    except Exception:
+        # Fall back to the information_schema approach if the pg_trigger query fails
+        return _get_postgresql_triggers_fallback(connector, table_name, schema_name)
+
+
+def _get_postgresql_triggers_fallback(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
+) -> List[TriggerInfo]:
+    """Fallback to information_schema if pg_trigger query fails."""
+    from .models import TriggerEvent, TriggerTiming
+
     schema_filter = f"AND schemaname = '{schema_name}'" if schema_name else ""
     sql = f"""
     SELECT trigger_name, event_manipulation, action_timing, action_statement
@@ -430,13 +540,27 @@ def _get_postgresql_triggers(
         triggers = []
 
         for row in results:
+            # Map event string to enum with fallback
+            event_str = row["event_manipulation"].lower()
+            try:
+                event = TriggerEvent(event_str)
+            except ValueError:
+                event = TriggerEvent.INSERT
+
+            # Map timing string to enum with fallback
+            timing_str = row["action_timing"].lower()
+            try:
+                timing = TriggerTiming(timing_str)
+            except ValueError:
+                timing = TriggerTiming.AFTER
+
             triggers.append(
                 TriggerInfo(
                     name=row["trigger_name"],
                     table_name=table_name,
-                    event=row["event_manipulation"].lower(),
-                    timing=row["action_timing"].lower(),
-                    definition=row["action_statement"],
+                    event=event,
+                    timing=timing,
+                    definition=row["action_statement"] or "",
                 )
             )
 
@@ -475,6 +599,111 @@ def _get_postgresql_functions(
 ) -> List[StoredProcedureInfo]:
     schema_filter = f"AND n.nspname = '{schema_name}'" if schema_name else ""
     sql = f"""
+    SELECT 
+        p.proname as name,
+        n.nspname as schema_name,
+        CASE p.prokind
+            WHEN 'f' THEN 'function'
+            WHEN 'p' THEN 'procedure'
+            WHEN 'a' THEN 'aggregate'
+            WHEN 'w' THEN 'window'
+            ELSE 'function'
+        END as routine_type,
+        CASE 
+            WHEN p.prorettype = 0 THEN 'void'
+            ELSE format_type(p.prorettype, NULL)
+        END as return_type,
+        p.proargnames as arg_names,
+        oidvectortypes(p.proargtypes) as arg_types,
+        p.pronargs as arg_count,
+        pg_get_functiondef(p.oid) as definition,
+        l.lanname as language,
+        p.proisstrict as is_strict,
+        p.prosecdef as security_definer,
+        CASE p.provolatile
+            WHEN 'i' THEN true  -- immutable
+            WHEN 's' THEN true  -- stable
+            WHEN 'v' THEN false -- volatile
+            ELSE false
+        END as is_deterministic,
+        obj_description(p.oid, 'pg_proc') as description
+    FROM pg_proc p
+    JOIN pg_namespace n ON p.pronamespace = n.oid
+    JOIN pg_language l ON p.prolang = l.oid
+    WHERE n.nspname NOT IN ('information_schema', 'pg_catalog', 'pg_toast', 'pg_temp_1')
+    AND p.prokind IN ('f', 'p')  -- functions and procedures only
+    {schema_filter}
+    ORDER BY n.nspname, p.proname
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        procedures = []
+
+        for row in results:
+            # Parse parameters
+            parameters = []
+            if row["arg_names"] and row["arg_types"]:
+                arg_names = row["arg_names"]
+                arg_types = row["arg_types"].split(", ") if row["arg_types"] else []
+
+                # Handle case where arg_names might be a PostgreSQL array string
+                if (
+                    isinstance(arg_names, str)
+                    and arg_names.startswith("{")
+                    and arg_names.endswith("}")
+                ):
+                    # Parse PostgreSQL array format like {arg1,arg2,arg3}
+                    names = arg_names[1:-1].split(",") if len(arg_names) > 2 else []
+                elif isinstance(arg_names, list):
+                    names = arg_names
+                else:
+                    names = []
+
+                # Create parameter list
+                for i, arg_type in enumerate(arg_types):
+                    param_name = (
+                        names[i] if i < len(names) and names[i] else f"param_{i + 1}"
+                    )
+                    parameters.append(
+                        {
+                            "name": param_name,
+                            "type": arg_type.strip(),
+                            "mode": "IN",  # PostgreSQL default
+                        }
+                    )
+
+            # Determine security type
+            security_type = "DEFINER" if row.get("security_definer") else "INVOKER"
+
+            procedures.append(
+                StoredProcedureInfo(
+                    name=row["name"],
+                    schema_name=row["schema_name"],
+                    parameters=parameters,
+                    return_type=row["return_type"]
+                    if row["return_type"] != "void"
+                    else None,
+                    definition=row["definition"] or "",
+                    language=row["language"] or "sql",
+                    is_deterministic=row.get("is_deterministic", False),
+                    security_type=security_type,
+                    description=row.get("description"),
+                )
+            )
+
+        return procedures
+    except Exception:
+        # Fall back to basic query if the comprehensive one fails
+        return _get_postgresql_functions_fallback(connector, schema_name)
+
+
+def _get_postgresql_functions_fallback(
+    connector: DatabaseConnector, schema_name: Optional[str]
+) -> List[StoredProcedureInfo]:
+    """Fallback to basic query if the comprehensive PostgreSQL functions query fails."""
+    schema_filter = f"AND n.nspname = '{schema_name}'" if schema_name else ""
+    sql = f"""
     SELECT p.proname as name, n.nspname as schema_name, pg_get_functiondef(p.oid) as definition
     FROM pg_proc p
     JOIN pg_namespace n ON p.pronamespace = n.oid
@@ -490,7 +719,7 @@ def _get_postgresql_functions(
                 StoredProcedureInfo(
                     name=row["name"],
                     schema_name=row["schema_name"],
-                    definition=row["definition"],
+                    definition=row["definition"] or "",
                     language="plpgsql",
                 )
             )

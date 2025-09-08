@@ -88,11 +88,19 @@ class DBSpelunker:
         # Get relationships for the schema
         relationships = analyze_relationships_tool(self.db_connection_str, schema_name)
 
+        # Get stored procedures for the schema (this is already done in overview,
+        # but we want to make sure we have the most up-to-date data)
+        from .tools import get_stored_procedures_tool
+
+        stored_procedures = get_stored_procedures_tool(
+            self.db_connection_str, schema_name
+        )
+
         return SchemaInfo(
             name=schema_name,
             tables=analyzed_tables,
             views=target_schema.views,
-            stored_procedures=target_schema.stored_procedures,
+            stored_procedures=stored_procedures,
             relationships=relationships,
         )
 
