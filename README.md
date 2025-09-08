@@ -2,6 +2,8 @@
 
 A simple tool that uses AI to automatically generate documentation for your database.
 
+Checkout the [example output](./EXAMPLE.md).
+
 ## What it does
 
 DBSpelunker connects to your database, analyzes all the tables and relationships, and creates a comprehensive markdown document explaining what everything is for. It uses AI to understand what each table represents based on column names and structure.
