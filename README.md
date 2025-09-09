@@ -2,7 +2,7 @@
 
 A simple tool that uses AI to automatically generate documentation for your database.
 
-Checkout the [example output](./EXAMPLE.md).
+Checkout the [example output](./example/EXAMPLE_OUTPUT.md).
 
 ## What it does
 
