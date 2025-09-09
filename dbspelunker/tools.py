@@ -191,26 +191,33 @@ def get_database_overview_tool(connection_string: str) -> DatabaseOverview:
             table_indexes = inspector.get_indexes(table_name, schema=schema_name)
             schema_indexes += len(table_indexes)
 
+            # Also count primary key as an index if it exists
+            pk_constraint = inspector.get_pk_constraint(table_name, schema=schema_name)
+            if pk_constraint and pk_constraint.get("constrained_columns"):
+                schema_indexes += 1
+
         total_triggers += schema_triggers
         total_indexes += schema_indexes
 
-        # Create basic table info objects for the overview
-        basic_tables = [
-            TableInfo(name=table_name, columns=[]) for table_name in table_names
-        ]
-        basic_views = [
-            TableInfo(name=view_name, columns=[]) for view_name in view_names
-        ]
+        # Only include schemas that have actual content (tables, views, or procedures)
+        if table_names or view_names or stored_procedures:
+            # Create basic table info objects for the overview
+            basic_tables = [
+                TableInfo(name=table_name, columns=[]) for table_name in table_names
+            ]
+            basic_views = [
+                TableInfo(name=view_name, columns=[]) for view_name in view_names
+            ]
 
-        schemas.append(
-            SchemaInfo(
-                name=schema_name,
-                tables=basic_tables,
-                views=basic_views,
-                stored_procedures=stored_procedures,
-                relationships=[],
+            schemas.append(
+                SchemaInfo(
+                    name=schema_name,
+                    tables=basic_tables,
+                    views=basic_views,
+                    stored_procedures=stored_procedures,
+                    relationships=[],
+                )
             )
-        )
 
     return DatabaseOverview(
         name=engine.url.database or "unknown",
@@ -307,6 +314,20 @@ def get_table_schema_tool(
                 columns=idx_columns,
                 is_unique=idx["unique"],
                 is_primary=is_primary_key_index,
+            )
+        )
+
+    # If we have a primary key but no primary key index was found, add it explicitly
+    has_pk_index = any(idx.is_primary for idx in index_info)
+    if pk_columns and not has_pk_index:
+        index_info.append(
+            IndexInfo(
+                name=pk_constraint["name"] or f"{table_name}_pkey",
+                table_name=table_name,
+                index_type=IndexType.PRIMARY,
+                columns=list(pk_columns),
+                is_unique=True,
+                is_primary=True,
             )
         )
 
