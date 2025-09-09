@@ -49,6 +49,13 @@ class IndexType(StrEnum):
     FULLTEXT = "fulltext"
 
 
+class RelationshipType(StrEnum):
+    ONE_TO_ONE = "one_to_one"
+    ONE_TO_MANY = "one_to_many"
+    MANY_TO_ONE = "many_to_one"
+    MANY_TO_MANY = "many_to_many"
+
+
 class TriggerEvent(StrEnum):
     INSERT = "insert"
     UPDATE = "update"
@@ -161,7 +168,7 @@ class RelationshipInfo(BaseModel):
     constraint_name: str
     on_delete: Optional[str] = None
     on_update: Optional[str] = None
-    relationship_type: str = "one_to_many"
+    relationship_type: RelationshipType = RelationshipType.ONE_TO_MANY
 
 
 class SchemaInfo(BaseModel):

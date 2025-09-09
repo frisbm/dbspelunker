@@ -16,6 +16,7 @@ from .models import (
     IndexInfo,
     IndexType,
     RelationshipInfo,
+    RelationshipType,
     SchemaInfo,
     StoredProcedureInfo,
     TableInfo,
@@ -440,10 +441,97 @@ def analyze_relationships_tool(
                             on_update=str(fk.get("onupdate"))
                             if fk.get("onupdate")
                             else None,
+                            relationship_type=RelationshipType.MANY_TO_ONE,  # Default for non-PostgreSQL
                         )
                     )
 
         return relationships
+
+
+def _get_unique_constraints_postgresql(
+    connector: DatabaseConnector, schema_name: Optional[str] = None
+) -> Dict[str, List[str]]:
+    """Get unique constraints for PostgreSQL tables.
+
+    Returns:
+        Dict mapping table_name to list of unique columns
+    """
+    schema_filter = f"AND n.nspname = '{schema_name}'" if schema_name else ""
+    sql = f"""
+    SELECT 
+        tc.table_name,
+        kcu.column_name
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu 
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+    JOIN pg_namespace n ON n.nspname = tc.table_schema
+    WHERE tc.constraint_type IN ('UNIQUE', 'PRIMARY KEY')
+    {schema_filter}
+    ORDER BY tc.table_name, kcu.ordinal_position
+    """
+    try:
+        results = connector.execute_safe_sql(sql)
+        unique_constraints: Dict[str, List[str]] = {}
+        for row in results:
+            table_name = row["table_name"]
+            column_name = row["column_name"]
+            if table_name not in unique_constraints:
+                unique_constraints[table_name] = []
+            unique_constraints[table_name].append(column_name)
+        return unique_constraints
+    except Exception:
+        return {}
+
+
+def _is_junction_table(table_name: str, relationships: List[RelationshipInfo]) -> bool:
+    """Detect if a table is a junction table for many-to-many relationships.
+
+    A table is considered a junction table if:
+    - It has exactly 2 foreign key relationships as source
+    - Both foreign keys reference different tables
+    - The table has no other significant columns (optional)
+    """
+    outgoing_fks = [r for r in relationships if r.source_table == table_name]
+
+    # Must have exactly 2 outgoing foreign keys
+    if len(outgoing_fks) != 2:
+        return False
+
+    # Must reference different target tables
+    target_tables = {fk.target_table for fk in outgoing_fks}
+    return len(target_tables) == 2
+
+
+def _detect_relationship_type(
+    source_table: str,
+    source_column: str,
+    target_table: str,
+    target_column: str,
+    unique_constraints: Dict[str, List[str]],
+    all_relationships: List[RelationshipInfo],
+) -> RelationshipType:
+    """Detect the relationship type based on constraints and table structure.
+
+    Logic:
+    - ONE_TO_ONE: Source column has unique constraint
+    - MANY_TO_MANY: Source table is a junction table
+    - MANY_TO_ONE: Default case (FK without unique constraint)
+    - ONE_TO_MANY: Reverse perspective of MANY_TO_ONE
+    """
+    # Check if source table is a junction table
+    if _is_junction_table(source_table, all_relationships):
+        return RelationshipType.MANY_TO_MANY
+
+    # Check if source column has unique constraint
+    source_unique_columns = unique_constraints.get(source_table, [])
+    if source_column in source_unique_columns:
+        return RelationshipType.ONE_TO_ONE
+
+    # For standard FK relationships, determine based on perspective
+    # From source table perspective: MANY_TO_ONE (many records can reference one target)
+    # From target table perspective: ONE_TO_MANY (one record can be referenced by many)
+    return RelationshipType.MANY_TO_ONE
 
 
 def _get_postgresql_relationships(
@@ -479,8 +567,12 @@ def _get_postgresql_relationships(
 
     try:
         results = connector.execute_safe_sql(sql)
-        relationships = []
 
+        # Get unique constraints for relationship type detection
+        unique_constraints = _get_unique_constraints_postgresql(connector, schema_name)
+
+        # First pass: create basic relationships without types
+        basic_relationships = []
         for row in results:
             # Convert SQL standard values to more readable format
             on_delete = None
@@ -491,7 +583,7 @@ def _get_postgresql_relationships(
             if row["on_update"] and row["on_update"] != "NO ACTION":
                 on_update = row["on_update"]
 
-            relationships.append(
+            basic_relationships.append(
                 RelationshipInfo(
                     source_table=row["source_table"],
                     source_column=row["source_column"],
@@ -500,10 +592,36 @@ def _get_postgresql_relationships(
                     constraint_name=row["constraint_name"],
                     on_delete=on_delete,
                     on_update=on_update,
+                    relationship_type=RelationshipType.ONE_TO_MANY,  # Temporary default
                 )
             )
 
-        return relationships
+        # Second pass: detect actual relationship types
+        final_relationships = []
+        for rel in basic_relationships:
+            relationship_type = _detect_relationship_type(
+                rel.source_table,
+                rel.source_column,
+                rel.target_table,
+                rel.target_column,
+                unique_constraints,
+                basic_relationships,
+            )
+
+            final_relationships.append(
+                RelationshipInfo(
+                    source_table=rel.source_table,
+                    source_column=rel.source_column,
+                    target_table=rel.target_table,
+                    target_column=rel.target_column,
+                    constraint_name=rel.constraint_name,
+                    on_delete=rel.on_delete,
+                    on_update=rel.on_update,
+                    relationship_type=relationship_type,
+                )
+            )
+
+        return final_relationships
     except Exception:
         # Fallback to original method if query fails
         engine = connector.get_engine()
@@ -522,6 +640,7 @@ def _get_postgresql_relationships(
                             target_table=fk["referred_table"],
                             target_column=fk["referred_columns"][0],
                             constraint_name=fk["name"] or f"{table_name}_fk",
+                            relationship_type=RelationshipType.MANY_TO_ONE,  # Default fallback
                         )
                     )
         return relationships
