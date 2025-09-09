@@ -407,7 +407,8 @@ class DocumentationReport(BaseModel):
             if schema.tables:
                 lines.append(_h(4, "Tables"))
                 lines.append("")
-                for t in schema.tables:
+                # Sort tables alphabetically by name
+                for t in sorted(schema.tables, key=lambda x: x.name):
                     fq = (
                         f"{schema.name}.{t.name}"
                         if t.schema_name or schema.name
@@ -530,7 +531,8 @@ class DocumentationReport(BaseModel):
                             "Description",
                         ]
                         idx_rows = []
-                        for idx in t.indexes:
+                        # Sort indexes alphabetically by name
+                        for idx in sorted(t.indexes, key=lambda x: x.name):
                             idx_rows.append(
                                 [
                                     idx.name,
@@ -557,7 +559,8 @@ class DocumentationReport(BaseModel):
                             "Description",
                         ]
                         trg_rows = []
-                        for trg in t.triggers:
+                        # Sort triggers alphabetically by name
+                        for trg in sorted(t.triggers, key=lambda x: x.name):
                             trg_rows.append(
                                 [
                                     trg.name,
@@ -569,7 +572,8 @@ class DocumentationReport(BaseModel):
                             )
                         lines.append(_md_table(trg_headers, trg_rows))
                         # Include AI summaries and definitions below table for readability
-                        for trg in t.triggers:
+                        # Sort triggers alphabetically by name for detailed sections
+                        for trg in sorted(t.triggers, key=lambda x: x.name):
                             lines.append("")
                             lines.append(_h(6, f"Trigger: {trg.name}"))
 
@@ -669,7 +673,8 @@ class DocumentationReport(BaseModel):
                     "Modified",
                 ]
                 sp_rows = []
-                for sp in schema.stored_procedures:
+                # Sort stored procedures alphabetically by name
+                for sp in sorted(schema.stored_procedures, key=lambda x: x.name):
                     sp_rows.append(
                         [
                             sp.name,
@@ -682,7 +687,8 @@ class DocumentationReport(BaseModel):
                     )
                 lines.append(_md_table(sp_headers, sp_rows))
                 # AI summaries and definitions
-                for sp in schema.stored_procedures:
+                # Sort stored procedures alphabetically by name for detailed sections
+                for sp in sorted(schema.stored_procedures, key=lambda x: x.name):
                     lines.append("")
                     lines.append(_h(5, f"Procedure: {sp.name}"))
 
@@ -715,6 +721,8 @@ class DocumentationReport(BaseModel):
         all_rels: List[RelationshipInfo] = []
         for schema in db.schemas:
             all_rels.extend(schema.relationships)
+        # Sort relationships alphabetically by source table, then target table
+        all_rels = sorted(all_rels, key=lambda x: (x.source_table, x.target_table))
         if all_rels:
             rel_headers = [
                 "From",

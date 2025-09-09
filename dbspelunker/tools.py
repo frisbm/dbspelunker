@@ -245,10 +245,16 @@ def get_table_schema_tool(
     columns = []
     for col_data in columns_data:
         col_name = col_data["name"]
+        type_str = str(col_data["type"])
+        data_type, max_length, precision, scale = _extract_type_info(type_str)
+
         columns.append(
             ColumnInfo(
                 name=col_name,
-                data_type=_map_column_type(str(col_data["type"])),
+                data_type=data_type,
+                max_length=max_length,
+                precision=precision,
+                scale=scale,
                 is_nullable=col_data["nullable"],
                 default_value=str(col_data["default"])
                 if col_data["default"] is not None
@@ -270,27 +276,36 @@ def get_table_schema_tool(
             )
         )
 
-    for fk in foreign_keys:
-        constraints.append(
-            ConstraintInfo(
-                name=fk["name"] or f"{table_name}_fk",
-                type=ConstraintType.FOREIGN_KEY,
-                columns=fk["constrained_columns"],
-                referenced_table=fk["referred_table"],
-                referenced_columns=fk["referred_columns"],
-            )
-        )
+    # Get foreign key constraints with proper ON DELETE/UPDATE info
+    fk_constraints = get_foreign_key_constraints_tool(
+        connector, table_name, schema_name
+    )
+    constraints.extend(fk_constraints)
+
+    # Add CHECK constraints
+    check_constraints = get_check_constraints_tool(connector, table_name, schema_name)
+    constraints.extend(check_constraints)
 
     index_info: List[IndexInfo] = []
     for idx in indexes:
+        # Check if this index is the primary key index
+        idx_columns = [col for col in idx["column_names"] if col is not None]
+        is_primary_key_index = (
+            idx["unique"]
+            and set(idx_columns) == pk_columns
+            and len(idx_columns) == len(pk_columns)
+        )
+
         index_info.append(
             IndexInfo(
                 name=idx["name"] or f"{table_name}_idx_{len(index_info)}",
                 table_name=table_name,
-                index_type=IndexType.UNIQUE if idx["unique"] else IndexType.INDEX,
-                columns=[col for col in idx["column_names"] if col is not None],
+                index_type=IndexType.PRIMARY
+                if is_primary_key_index
+                else (IndexType.UNIQUE if idx["unique"] else IndexType.INDEX),
+                columns=idx_columns,
                 is_unique=idx["unique"],
-                is_primary=False,
+                is_primary=is_primary_key_index,
             )
         )
 
@@ -304,16 +319,18 @@ def get_table_schema_tool(
         if db_type == DatabaseType.POSTGRESQL:
             # Get row count and size for PostgreSQL
             try:
-                # Try to get row count with a simple estimate
-                count_query = f"SELECT reltuples::bigint as row_count FROM pg_class WHERE relname = '{table_name}'"
+                # Use actual COUNT(*) for accurate row count
+                full_table_name = (
+                    f'"{schema_name}"."{table_name}"'
+                    if schema_name
+                    else f'"{table_name}"'
+                )
+                count_query = f"SELECT COUNT(*) as row_count FROM {full_table_name}"
                 count_result = connector.execute_safe_sql(count_query)
                 if count_result and count_result[0]["row_count"] is not None:
                     row_count = int(count_result[0]["row_count"])
 
                 # Try to get table size
-                full_table_name = (
-                    f"{schema_name}.{table_name}" if schema_name else table_name
-                )
                 size_query = (
                     f"SELECT pg_total_relation_size('{full_table_name}') as size_bytes"
                 )
@@ -322,25 +339,56 @@ def get_table_schema_tool(
                     size_bytes = int(size_result[0]["size_bytes"])
 
             except Exception:
-                pass  # These are optional
+                # Fallback to estimate if COUNT(*) fails (e.g., on very large tables)
+                try:
+                    estimate_query = f"SELECT reltuples::bigint as row_count FROM pg_class WHERE relname = '{table_name}'"
+                    estimate_result = connector.execute_safe_sql(estimate_query)
+                    if estimate_result and estimate_result[0]["row_count"] is not None:
+                        row_count = max(
+                            0, int(estimate_result[0]["row_count"])
+                        )  # Ensure non-negative
+                except Exception:
+                    pass
 
         elif db_type == DatabaseType.MYSQL:
             # Get row count and size for MySQL
-            size_query = f"""
-                SELECT 
-                    data_length + index_length as size_bytes,
-                    table_rows as row_count
-                FROM information_schema.tables
-                WHERE table_name = '{table_name}' 
-                AND table_schema = '{schema_name or "DATABASE()"}'
-            """
             try:
-                result = connector.execute_safe_sql(size_query)
-                if result:
-                    size_bytes = result[0].get("size_bytes")
-                    row_count = result[0].get("row_count")
+                # Use actual COUNT(*) for accurate row count
+                full_table_name = (
+                    f"`{schema_name}`.`{table_name}`"
+                    if schema_name
+                    else f"`{table_name}`"
+                )
+                count_query = f"SELECT COUNT(*) as row_count FROM {full_table_name}"
+                count_result = connector.execute_safe_sql(count_query)
+                if count_result and count_result[0]["row_count"] is not None:
+                    row_count = int(count_result[0]["row_count"])
+
+                # Get table size from information_schema
+                size_query = f"""
+                    SELECT 
+                        data_length + index_length as size_bytes
+                    FROM information_schema.tables
+                    WHERE table_name = '{table_name}' 
+                    AND table_schema = '{schema_name or "DATABASE()"}'
+                """
+                size_result = connector.execute_safe_sql(size_query)
+                if size_result and size_result[0]["size_bytes"] is not None:
+                    size_bytes = int(size_result[0]["size_bytes"])
             except Exception:
-                pass
+                # Fallback to information_schema estimate
+                try:
+                    estimate_query = f"""
+                        SELECT table_rows as row_count
+                        FROM information_schema.tables
+                        WHERE table_name = '{table_name}' 
+                        AND table_schema = '{schema_name or "DATABASE()"}'
+                    """
+                    estimate_result = connector.execute_safe_sql(estimate_query)
+                    if estimate_result and estimate_result[0]["row_count"] is not None:
+                        row_count = max(0, int(estimate_result[0]["row_count"]))
+                except Exception:
+                    pass
 
     except Exception:
         pass  # Size and row count are optional
@@ -362,34 +410,121 @@ def analyze_relationships_tool(
 ) -> List[RelationshipInfo]:
     """Analyze foreign key relationships between tables."""
     connector = DatabaseConnector(connection_string)
-    engine = connector.get_engine()
-    inspector = inspect(engine)
+    db_type = connector.get_database_type()
 
-    relationships = []
-    table_names = inspector.get_table_names(schema=schema_name)
+    if db_type == DatabaseType.POSTGRESQL:
+        return _get_postgresql_relationships(connector, schema_name)
+    else:
+        # Fallback to SQLAlchemy inspector for other databases
+        engine = connector.get_engine()
+        inspector = inspect(engine)
 
-    for table_name in table_names:
-        foreign_keys = inspector.get_foreign_keys(table_name, schema=schema_name)
+        relationships = []
+        table_names = inspector.get_table_names(schema=schema_name)
 
-        for fk in foreign_keys:
-            if fk["constrained_columns"] and fk["referred_columns"]:
-                relationships.append(
-                    RelationshipInfo(
-                        source_table=table_name,
-                        source_column=fk["constrained_columns"][0],
-                        target_table=fk["referred_table"],
-                        target_column=fk["referred_columns"][0],
-                        constraint_name=fk["name"] or f"{table_name}_fk",
-                        on_delete=str(fk.get("ondelete"))
-                        if fk.get("ondelete")
-                        else None,
-                        on_update=str(fk.get("onupdate"))
-                        if fk.get("onupdate")
-                        else None,
+        for table_name in table_names:
+            foreign_keys = inspector.get_foreign_keys(table_name, schema=schema_name)
+
+            for fk in foreign_keys:
+                if fk["constrained_columns"] and fk["referred_columns"]:
+                    relationships.append(
+                        RelationshipInfo(
+                            source_table=table_name,
+                            source_column=fk["constrained_columns"][0],
+                            target_table=fk["referred_table"],
+                            target_column=fk["referred_columns"][0],
+                            constraint_name=fk["name"] or f"{table_name}_fk",
+                            on_delete=str(fk.get("ondelete"))
+                            if fk.get("ondelete")
+                            else None,
+                            on_update=str(fk.get("onupdate"))
+                            if fk.get("onupdate")
+                            else None,
+                        )
                     )
-                )
 
-    return relationships
+        return relationships
+
+
+def _get_postgresql_relationships(
+    connector: DatabaseConnector, schema_name: Optional[str] = None
+) -> List[RelationshipInfo]:
+    """Get foreign key relationships for PostgreSQL with proper ON DELETE/UPDATE detection."""
+    schema_filter = f"AND n.nspname = '{schema_name}'" if schema_name else ""
+
+    sql = f"""
+    SELECT 
+        tc.constraint_name,
+        tc.table_name as source_table,
+        kcu.column_name as source_column,
+        ccu.table_name as target_table,
+        ccu.column_name as target_column,
+        rc.delete_rule as on_delete,
+        rc.update_rule as on_update
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu 
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage ccu 
+        ON ccu.constraint_name = tc.constraint_name
+        AND ccu.table_schema = tc.table_schema
+    JOIN information_schema.referential_constraints rc 
+        ON tc.constraint_name = rc.constraint_name
+        AND tc.table_schema = rc.constraint_schema
+    JOIN pg_namespace n ON n.nspname = tc.table_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+    {schema_filter}
+    ORDER BY tc.table_name, tc.constraint_name
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        relationships = []
+
+        for row in results:
+            # Convert SQL standard values to more readable format
+            on_delete = None
+            if row["on_delete"] and row["on_delete"] != "NO ACTION":
+                on_delete = row["on_delete"]
+
+            on_update = None
+            if row["on_update"] and row["on_update"] != "NO ACTION":
+                on_update = row["on_update"]
+
+            relationships.append(
+                RelationshipInfo(
+                    source_table=row["source_table"],
+                    source_column=row["source_column"],
+                    target_table=row["target_table"],
+                    target_column=row["target_column"],
+                    constraint_name=row["constraint_name"],
+                    on_delete=on_delete,
+                    on_update=on_update,
+                )
+            )
+
+        return relationships
+    except Exception:
+        # Fallback to original method if query fails
+        engine = connector.get_engine()
+        inspector = inspect(engine)
+        relationships = []
+        table_names = inspector.get_table_names(schema=schema_name)
+
+        for table_name in table_names:
+            foreign_keys = inspector.get_foreign_keys(table_name, schema=schema_name)
+            for fk in foreign_keys:
+                if fk["constrained_columns"] and fk["referred_columns"]:
+                    relationships.append(
+                        RelationshipInfo(
+                            source_table=table_name,
+                            source_column=fk["constrained_columns"][0],
+                            target_table=fk["referred_table"],
+                            target_column=fk["referred_columns"][0],
+                            constraint_name=fk["name"] or f"{table_name}_fk",
+                        )
+                    )
+        return relationships
 
 
 def get_indexes_tool(
@@ -401,17 +536,29 @@ def get_indexes_tool(
     inspector = inspect(engine)
 
     indexes_data = inspector.get_indexes(table_name, schema=schema_name)
+    pk_constraint = inspector.get_pk_constraint(table_name, schema=schema_name)
+    pk_columns = set(pk_constraint.get("constrained_columns", []))
 
     indexes: List[IndexInfo] = []
     for idx_data in indexes_data:
+        # Check if this index is the primary key index
+        idx_columns = [col for col in idx_data["column_names"] if col is not None]
+        is_primary_key_index = (
+            idx_data["unique"]
+            and set(idx_columns) == pk_columns
+            and len(idx_columns) == len(pk_columns)
+        )
+
         indexes.append(
             IndexInfo(
                 name=idx_data["name"] or f"{table_name}_idx_{len(indexes)}",
                 table_name=table_name,
-                index_type=IndexType.UNIQUE if idx_data["unique"] else IndexType.INDEX,
-                columns=[col for col in idx_data["column_names"] if col is not None],
+                index_type=IndexType.PRIMARY
+                if is_primary_key_index
+                else (IndexType.UNIQUE if idx_data["unique"] else IndexType.INDEX),
+                columns=idx_columns,
                 is_unique=idx_data["unique"],
-                is_primary=False,
+                is_primary=is_primary_key_index,
             )
         )
 
@@ -446,43 +593,323 @@ def get_stored_procedures_tool(
         return []
 
 
-def _map_column_type(type_str: str) -> ColumnType:
-    type_lower = type_str.lower()
+def get_check_constraints_tool(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str] = None
+) -> List[ConstraintInfo]:
+    """Get CHECK constraints for a table."""
+    db_type = connector.get_database_type()
 
+    if db_type == DatabaseType.POSTGRESQL:
+        return _get_postgresql_check_constraints(connector, table_name, schema_name)
+    elif db_type == DatabaseType.MYSQL:
+        return _get_mysql_check_constraints(connector, table_name, schema_name)
+    else:
+        return []
+
+
+def get_foreign_key_constraints_tool(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str] = None
+) -> List[ConstraintInfo]:
+    """Get foreign key constraints for a table with proper ON DELETE/UPDATE info."""
+    db_type = connector.get_database_type()
+
+    if db_type == DatabaseType.POSTGRESQL:
+        return _get_postgresql_foreign_key_constraints(
+            connector, table_name, schema_name
+        )
+    else:
+        # Fallback to SQLAlchemy inspector for other databases
+        engine = connector.get_engine()
+        inspector = inspect(engine)
+        foreign_keys = inspector.get_foreign_keys(table_name, schema=schema_name)
+
+        constraints = []
+        for fk in foreign_keys:
+            constraints.append(
+                ConstraintInfo(
+                    name=fk["name"] or f"{table_name}_fk",
+                    type=ConstraintType.FOREIGN_KEY,
+                    columns=fk["constrained_columns"],
+                    referenced_table=fk["referred_table"],
+                    referenced_columns=fk["referred_columns"],
+                    on_delete=str(fk.get("ondelete")) if fk.get("ondelete") else None,
+                    on_update=str(fk.get("onupdate")) if fk.get("onupdate") else None,
+                )
+            )
+        return constraints
+
+
+def _get_postgresql_foreign_key_constraints(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
+) -> List[ConstraintInfo]:
+    """Get foreign key constraints for PostgreSQL with proper ON DELETE/UPDATE detection."""
+    schema_filter = f"AND tc.table_schema = '{schema_name}'" if schema_name else ""
+
+    sql = f"""
+    SELECT 
+        tc.constraint_name,
+        array_agg(kcu.column_name ORDER BY kcu.ordinal_position) as constrained_columns,
+        ccu.table_name as referenced_table,
+        array_agg(ccu.column_name ORDER BY kcu.ordinal_position) as referenced_columns,
+        rc.delete_rule as on_delete,
+        rc.update_rule as on_update
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu 
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+    JOIN information_schema.constraint_column_usage ccu 
+        ON ccu.constraint_name = tc.constraint_name
+        AND ccu.table_schema = tc.table_schema
+    JOIN information_schema.referential_constraints rc 
+        ON tc.constraint_name = rc.constraint_name
+        AND tc.table_schema = rc.constraint_schema
+    WHERE tc.constraint_type = 'FOREIGN KEY'
+    AND tc.table_name = '{table_name}'
+    {schema_filter}
+    GROUP BY tc.constraint_name, ccu.table_name, rc.delete_rule, rc.update_rule
+    ORDER BY tc.constraint_name
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        constraints = []
+
+        for row in results:
+            # Convert SQL standard values to more readable format
+            on_delete = None
+            if row["on_delete"] and row["on_delete"] != "NO ACTION":
+                on_delete = row["on_delete"]
+
+            on_update = None
+            if row["on_update"] and row["on_update"] != "NO ACTION":
+                on_update = row["on_update"]
+
+            # Handle column arrays
+            constrained_columns = []
+            if row["constrained_columns"]:
+                if isinstance(row["constrained_columns"], list):
+                    constrained_columns = row["constrained_columns"]
+                else:
+                    # Parse PostgreSQL array format
+                    import re
+
+                    col_match = re.findall(r"[^{},]+", str(row["constrained_columns"]))
+                    constrained_columns = [
+                        col.strip('"') for col in col_match if col.strip()
+                    ]
+
+            referenced_columns = []
+            if row["referenced_columns"]:
+                if isinstance(row["referenced_columns"], list):
+                    referenced_columns = row["referenced_columns"]
+                else:
+                    # Parse PostgreSQL array format
+                    import re
+
+                    col_match = re.findall(r"[^{},]+", str(row["referenced_columns"]))
+                    referenced_columns = [
+                        col.strip('"') for col in col_match if col.strip()
+                    ]
+
+            constraints.append(
+                ConstraintInfo(
+                    name=row["constraint_name"],
+                    type=ConstraintType.FOREIGN_KEY,
+                    columns=constrained_columns,
+                    referenced_table=row["referenced_table"],
+                    referenced_columns=referenced_columns,
+                    on_delete=on_delete,
+                    on_update=on_update,
+                )
+            )
+
+        return constraints
+    except Exception:
+        return []
+
+
+def _get_postgresql_check_constraints(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
+) -> List[ConstraintInfo]:
+    """Get CHECK constraints for PostgreSQL."""
+    schema_filter = f"AND n.nspname = '{schema_name}'" if schema_name else ""
+
+    sql = f"""
+    SELECT 
+        con.conname as constraint_name,
+        pg_get_constraintdef(con.oid) as constraint_definition,
+        ARRAY(
+            SELECT attname 
+            FROM pg_attribute 
+            WHERE attrelid = con.conrelid 
+            AND attnum = ANY(con.conkey)
+        ) as constrained_columns
+    FROM pg_constraint con
+    JOIN pg_class c ON con.conrelid = c.oid
+    JOIN pg_namespace n ON c.relnamespace = n.oid
+    WHERE c.relname = '{table_name}'
+    AND con.contype = 'c'  -- CHECK constraints
+    {schema_filter}
+    ORDER BY con.conname
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        constraints = []
+
+        for row in results:
+            # Extract the CHECK clause from the constraint definition
+            definition = row["constraint_definition"] or ""
+            check_clause = None
+            if definition.startswith("CHECK"):
+                # Remove "CHECK " prefix and outer parentheses
+                check_clause = definition[6:].strip()
+                if check_clause.startswith("(") and check_clause.endswith(")"):
+                    check_clause = check_clause[1:-1]
+
+            # Handle column names array (PostgreSQL returns arrays as strings)
+            columns = []
+            col_array = row["constrained_columns"]
+            if col_array:
+                if isinstance(col_array, str):
+                    # Parse PostgreSQL array format: {col1,col2}
+                    import re
+
+                    col_match = re.findall(r"[^{},]+", col_array)
+                    columns = [col.strip('"') for col in col_match if col.strip()]
+                elif isinstance(col_array, list):
+                    columns = col_array
+
+            constraints.append(
+                ConstraintInfo(
+                    name=row["constraint_name"],
+                    type=ConstraintType.CHECK,
+                    columns=columns,
+                    check_clause=check_clause,
+                )
+            )
+
+        return constraints
+    except Exception:
+        return []
+
+
+def _get_mysql_check_constraints(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
+) -> List[ConstraintInfo]:
+    """Get CHECK constraints for MySQL."""
+    schema_filter = (
+        f"AND table_schema = '{schema_name}'"
+        if schema_name
+        else "AND table_schema = DATABASE()"
+    )
+
+    sql = f"""
+    SELECT 
+        constraint_name,
+        check_clause
+    FROM information_schema.check_constraints
+    WHERE table_name = '{table_name}'
+    {schema_filter}
+    ORDER BY constraint_name
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        constraints = []
+
+        for row in results:
+            constraints.append(
+                ConstraintInfo(
+                    name=row["constraint_name"],
+                    type=ConstraintType.CHECK,
+                    columns=[],  # MySQL doesn't easily provide column info for CHECK constraints
+                    check_clause=row["check_clause"],
+                )
+            )
+
+        return constraints
+    except Exception:
+        return []
+
+
+def _extract_type_info(
+    type_str: str,
+) -> tuple[ColumnType, Optional[int], Optional[int], Optional[int]]:
+    """
+    Extract type information including length, precision, and scale from type string.
+
+    Returns:
+        tuple: (data_type, max_length, precision, scale)
+    """
+    type_lower = type_str.lower()
+    max_length = None
+    precision = None
+    scale = None
+
+    # Extract numeric info from parentheses - handle patterns like VARCHAR(50), DECIMAL(10,2)
+    import re
+
+    params_match = re.search(r"\(([^)]+)\)", type_str)
+    if params_match:
+        params_str = params_match.group(1)
+        if "," in params_str:
+            # Precision and scale (e.g., DECIMAL(10,2))
+            parts = params_str.split(",")
+            try:
+                precision = int(parts[0].strip())
+                scale = int(parts[1].strip())
+            except (ValueError, IndexError):
+                pass
+        else:
+            # Single length parameter (e.g., VARCHAR(50))
+            try:
+                max_length = int(params_str.strip())
+            except ValueError:
+                pass
+
+    # Determine the base type
     if "int" in type_lower:
         if "bigint" in type_lower:
-            return ColumnType.BIGINT
+            return ColumnType.BIGINT, max_length, precision, scale
         elif "smallint" in type_lower:
-            return ColumnType.SMALLINT
-        return ColumnType.INTEGER
-    elif any(t in type_lower for t in ["varchar", "char", "text", "string"]):
-        if "text" in type_lower:
-            return ColumnType.TEXT
-        elif "char" in type_lower:
-            return ColumnType.CHAR
-        return ColumnType.VARCHAR
+            return ColumnType.SMALLINT, max_length, precision, scale
+        return ColumnType.INTEGER, max_length, precision, scale
+    elif "varchar" in type_lower:
+        return ColumnType.VARCHAR, max_length, precision, scale
+    elif "char" in type_lower and "varchar" not in type_lower:
+        # Pure CHAR type (not VARCHAR)
+        return ColumnType.CHAR, max_length, precision, scale
+    elif "text" in type_lower:
+        return ColumnType.TEXT, max_length, precision, scale
     elif any(t in type_lower for t in ["decimal", "numeric"]):
-        return ColumnType.DECIMAL
+        return ColumnType.DECIMAL, max_length, precision, scale
     elif any(t in type_lower for t in ["float", "double", "real"]):
-        return ColumnType.FLOAT
+        return ColumnType.FLOAT, max_length, precision, scale
     elif any(t in type_lower for t in ["bool", "boolean"]):
-        return ColumnType.BOOLEAN
-    elif any(t in type_lower for t in ["date", "time", "timestamp"]):
-        if "timestamp" in type_lower:
-            return ColumnType.TIMESTAMP
-        elif "time" in type_lower:
-            return ColumnType.TIME
-        return ColumnType.DATE
+        return ColumnType.BOOLEAN, max_length, precision, scale
+    elif "timestamp" in type_lower:
+        return ColumnType.TIMESTAMP, max_length, precision, scale
+    elif "time" in type_lower:
+        return ColumnType.TIME, max_length, precision, scale
+    elif "date" in type_lower:
+        return ColumnType.DATE, max_length, precision, scale
     elif "json" in type_lower:
-        return ColumnType.JSON
+        return ColumnType.JSON, max_length, precision, scale
     elif any(t in type_lower for t in ["blob", "binary"]):
-        return ColumnType.BLOB
+        return ColumnType.BLOB, max_length, precision, scale
     elif "uuid" in type_lower:
-        return ColumnType.UUID
+        return ColumnType.UUID, max_length, precision, scale
     elif "array" in type_lower:
-        return ColumnType.ARRAY
+        return ColumnType.ARRAY, max_length, precision, scale
 
-    return ColumnType.OTHER
+    return ColumnType.OTHER, max_length, precision, scale
+
+
+def _map_column_type(type_str: str) -> ColumnType:
+    """Legacy function for backwards compatibility."""
+    data_type, _, _, _ = _extract_type_info(type_str)
+    return data_type
 
 
 def _get_postgresql_triggers(

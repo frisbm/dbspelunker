@@ -299,6 +299,9 @@ The analysis identified {total_relationships} foreign key relationships between 
 
                 table_docs.append({"table_name": table.name, "documentation": doc})
 
+        # Sort table documentation alphabetically by table name
+        table_docs.sort(key=lambda x: x["table_name"])
+
         # Generate relationship analysis
         relationship_details = []
         for schema in all_schemas_info:
@@ -306,6 +309,9 @@ The analysis identified {total_relationships} foreign key relationships between 
                 relationship_details.append(
                     f"{rel.source_table}.{rel.source_column} → {rel.target_table}.{rel.target_column}"
                 )
+
+        # Sort relationships alphabetically by source table, then target table
+        relationship_details.sort()
 
         relationship_analysis = f"""
 Found {total_relationships} foreign key relationships:
@@ -321,6 +327,9 @@ Found {total_relationships} foreign key relationships:
                     all_indexes.append(
                         f"{table.name}.{index.name} ({index.index_type.value})"
                     )
+
+        # Sort indexes alphabetically by table name, then index name
+        all_indexes.sort()
 
         index_analysis = f"""
 Found {len(all_indexes)} indexes across all tables:
