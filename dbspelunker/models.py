@@ -758,6 +758,59 @@ class DocumentationReport(BaseModel):
             lines.append(_md_table(rel_headers, rel_rows))
             lines.append("")
 
+            # FK Actions Summary Table
+            lines.append(_h(3, "Foreign Key Actions Summary"))
+            lines.append("")
+            lines.append(
+                "Summary of ON DELETE behaviors for data safety and archival planning:"
+            )
+            lines.append("")
+
+            # Group relationships by ON DELETE action
+            from collections import defaultdict
+
+            delete_actions = defaultdict(list)
+            for r in all_rels:
+                action = r.on_delete or "NO ACTION"
+                delete_actions[action].append(f"{r.source_table} → {r.target_table}")
+
+            if delete_actions:
+                action_headers = ["ON DELETE Action", "Relationships", "Impact"]
+                action_rows = []
+
+                # Define impact descriptions for each action type
+                impact_descriptions = {
+                    "CASCADE": "Deleting parent automatically deletes children",
+                    "RESTRICT": "Cannot delete parent if children exist",
+                    "SET NULL": "Deleting parent sets foreign key to NULL",
+                    "SET DEFAULT": "Deleting parent sets foreign key to default value",
+                    "NO ACTION": "No automatic action (similar to RESTRICT)",
+                }
+
+                for action in sorted(delete_actions.keys()):
+                    relationships = sorted(delete_actions[action])
+                    impact = impact_descriptions.get(action, "Unknown behavior")
+                    action_rows.append([action, "<br>".join(relationships), impact])
+
+                lines.append(_md_table(action_headers, action_rows))
+                lines.append("")
+
+                # Add explanatory notes
+                lines.append("**Data Safety Notes:**")
+                lines.append(
+                    "- **CASCADE**: Use caution - deletes propagate automatically"
+                )
+                lines.append(
+                    "- **RESTRICT**: Safe for data preservation - prevents accidental deletes"
+                )
+                lines.append(
+                    "- **SET NULL/DEFAULT**: Breaks relationships but preserves child records"
+                )
+                lines.append(
+                    "- **NO ACTION**: Default PostgreSQL behavior, similar to RESTRICT"
+                )
+                lines.append("")
+
         # Indexes (global)
         lines.append(_h(2, "Indexes"))
         lines.append("")
