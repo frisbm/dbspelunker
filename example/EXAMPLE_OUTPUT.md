@@ -1,6 +1,6 @@
 # Database Documentation: database
 
-- Type: `postgresql` · Generated: `2025-09-09 14:55:53`
+- Type: `postgresql` · Generated: `2025-09-09 15:11:40`
 
 ## Executive Summary
 
@@ -8,7 +8,7 @@ Database Analysis Summary:
 - Database: database (postgresql)
 - Total Tables: 6
 - Total Columns: 51
-- Total Constraints: 18
+- Total Constraints: 19
 - Total Indexes: 15
 - Total Triggers: 3
 - Total Relationships: 6
@@ -60,9 +60,7 @@ The analysis identified 6 foreign key relationships between tables.
 ##### Table: healthcare.claim_line
 - Type: `table` · Rows: `47` · Size: `64.00 KB`
 
-> This table stores the individual billable services or procedures performed during a patient's healthcare visit. Each record represents a single line item on a medical claim, detailing the specific procedure, its cost, and the date it was provided. The table's primary purpose is to itemize all charges for billing and insurance reimbursement.
-
-Each claim line item is associated with a specific patient visit or `encounter`, allowing the system to group all charges related to that single interaction. The presence of `procedure_code` and `modifier` columns indicates this table is a core component of a revenue cycle management or medical billing system, capturing the necessary details to generate claims for insurance companies and statements for patients.
+> This table stores the individual line items for a healthcare billing claim, with each row representing a specific service or procedure provided to a patient. It captures the procedure code, the description of the service, the date it was rendered, and the associated charge amount. By linking to the `encounter` table, it associates each specific charge with a particular patient visit, forming the detailed basis for generating patient bills and submitting claims to insurance payers.
 
 ###### Columns
 | Column | Type | Nullable | Default | PK | FK | Details | Description |
@@ -101,7 +99,7 @@ This table references encounter.
 ##### Table: healthcare.encounter
 - Type: `table` · Rows: `29` · Size: `80.00 KB`
 
-> This table acts as a central record for patient-provider interactions within a healthcare setting, storing details for each visit or encounter. It documents who the patient was, which provider they saw, where the encounter took place, and on what date. This table links patients, providers, and healthcare organizations together for a specific event and serves as the foundational record for subsequent activities, such as medical billing, as indicated by its relationship with claim lines. The presence of 'encounter_type' and 'status' fields suggests it supports a structured workflow for managing different kinds of patient visits from scheduling through completion.
+> This table stores records of patient encounters, representing specific interactions between a patient and a healthcare provider. It acts as a central event log, connecting the patient, the provider who saw them, and the organization where the visit occurred. This encounter information is then used as the basis for creating individual billing items on a medical claim.
 
 ###### Columns
 | Column | Type | Nullable | Default | PK | FK | Details | Description |
@@ -148,11 +146,7 @@ This table references organization, references patient, references provider. and
 ##### Table: healthcare.organization
 - Type: `table` · Rows: `20` · Size: `32.00 KB`
 
-> This table serves as a master directory of healthcare organizations, such as hospitals, clinics, or labs. It stores foundational business information for each entity, including its name, type, location, and tax identifier. This master list is essential for tracking where patient care is delivered and which organizations employ or are affiliated with providers.
-
-In business terms, this table connects patient encounters to the specific facility where they occurred. It also links healthcare providers to the organizations they are affiliated with, establishing a network of care locations and personnel.
-
-The inclusion of a `tax_id` suggests the system supports financial processes like billing or insurance claims. The `type` column enables the system to differentiate between various kinds of facilities (e.g., hospitals vs. private clinics), which is crucial for reporting and operational management within a healthcare network.
+> This table serves as a master directory of healthcare organizations, such as hospitals, clinics, or labs, storing their core contact and identifying information. It provides a centralized, authoritative source for all facilities and corporate entities involved in the healthcare system. This table is referenced by patient encounters to specify the location where care was delivered and is used to associate healthcare providers with the organizations they are affiliated with. The presence of a `type` and `tax_id` column indicates its importance for administrative functions like billing, network management, and regulatory reporting.
 
 ###### Columns
 | Column | Type | Nullable | Default | PK | FK | Details | Description |
@@ -185,11 +179,11 @@ The inclusion of a `tax_id` suggests the system supports financial processes lik
 
 ###### Trigger: organization_update_timestamp
 
-> **AI Analysis:** This trigger automatically updates the `updated_at` timestamp to the current time whenever an organization's record is modified. It exists to maintain an accurate and reliable audit trail, ensuring that there is always a record of when an organization's data was last changed.
+> **AI Analysis:** This trigger automatically updates the `updated_at` timestamp to the current time whenever an organization's record is modified. This ensures an accurate and reliable audit trail, showing precisely when any information about a healthcare organization was last changed.
 
-Business Rule: When an organization's information is updated, the system must automatically record the date and time of the modification.
+Business Rule: When an organization's data is updated, the "last modified" timestamp must be automatically recorded.
 
-Implications: This trigger is crucial for data governance and auditing, as it guarantees the `updated_at` field is always accurate and reflects the true modification time. The performance impact is negligible, as updating a timestamp is a very lightweight and common database operation.
+Implications: This trigger is crucial for data integrity and auditing, as it provides a non-bypassable mechanism for tracking data changes. The performance impact is minimal and is a standard practice for maintaining data currency information.
 
 **Definition:**
 ```sql
@@ -213,11 +207,7 @@ and is referenced by encounter, referenced by provider_organization.
 ##### Table: healthcare.patient
 - Type: `table` · Rows: `22` · Size: `64.00 KB`
 
-> This table serves as a master patient index, storing the core demographic, contact, and insurance information for each individual within a healthcare system. It acts as the central source of truth for patient identity.
-
-This table is the primary reference for patient information, linking a unique patient to all of their related medical activities, such as the specific visits or treatments detailed in the `encounter` table.
-
-The structure supports key administrative and clinical functions, enabling staff to quickly find and verify patient records by name or date of birth for scheduling, treatment, and billing purposes.
+> This table serves as a master record for storing core demographic, contact, and insurance information for individuals within a healthcare system. It functions as the central source of truth for identifying and managing patient data across the application. This table is the primary reference for patient identity, linking to other tables like `encounter` to associate each patient with their specific medical visits or interactions. The inclusion of an `insurance_id` points to its use in billing and administrative workflows, while indexes on `last_name` and `date_of_birth` suggest these fields are critical for frequent patient lookups.
 
 ###### Columns
 | Column | Type | Nullable | Default | PK | FK | Details | Description |
@@ -254,11 +244,11 @@ The structure supports key administrative and clinical functions, enabling staff
 
 ###### Trigger: patient_update_timestamp
 
-> **AI Analysis:** This trigger automatically updates a timestamp each time a patient's record is modified, ensuring an accurate and current record of the last change. This serves as a simple but effective audit mechanism to track when patient data was last updated.
+> **AI Analysis:** This trigger automatically updates a timestamp on a patient's record each time any of their information is modified. It exists to maintain a reliable and automated audit trail, ensuring the system always has an accurate record of the last time a patient's data was changed.
 
-The trigger implements the business rule: "Whenever a patient's information is changed, the system must automatically record the date and time of that modification."
+The trigger implements the business rule: "Every modification to a patient's record must be automatically timestamped."
 
-This automation is critical for data integrity and auditing, providing a reliable timestamp for the last modification of any patient record. It introduces a minor performance overhead on all update operations, which is a standard trade-off for maintaining an auditable data history.
+This provides crucial data for auditing, data governance, and compliance by creating a reliable history of when patient data was last altered. The performance impact is negligible for typical operations but could introduce minor overhead during very large bulk updates.
 
 **Definition:**
 ```sql
@@ -281,9 +271,7 @@ and is referenced by encounter.
 ##### Table: healthcare.provider
 - Type: `table` · Rows: `22` · Size: `64.00 KB`
 
-> This table is a master directory of individual healthcare providers, storing their professional details, credentials like the National Provider Identifier (NPI), and contact information. It serves as a central reference for identifying and managing the clinicians who deliver care within the system.
-
-In business terms, this table connects each provider to the specific patient `encounters` they conduct and also links them to the larger healthcare `organizations` they are affiliated with. The presence of columns like `specialty` and `provider_type` indicates the system uses this data to manage provider roles, facilitate patient scheduling, and likely support billing and reporting functions.
+> This table serves as a master directory of healthcare providers, storing essential identifying information like their name, specialty, and unique National Provider Identifier (NPI). It functions as a central reference, linking providers to specific patient encounters and associating them with the larger healthcare organizations they belong to. The structure is designed to support core business functions such as managing a provider network, tracking patient care activities, and facilitating referrals.
 
 ###### Columns
 | Column | Type | Nullable | Default | PK | FK | Details | Description |
@@ -304,6 +292,7 @@ In business terms, this table connects each provider to the specific patient `en
 | --- | --- | --- | --- | --- |
 | provider\_pkey | primary\_key | id |  |  |
 | provider\_provider\_type\_check | check | provider\_type | check=((provider\_type)::text = ANY ((ARRAY['practitioner'::character varying, 'facility'::character varying])::text[])) |  |
+| provider\_npi\_key | unique | npi |  |  |
 
 ###### Indexes
 | Name | Type | Columns | Unique | Primary | Clustered | Size | Description |
@@ -319,11 +308,11 @@ In business terms, this table connects each provider to the specific patient `en
 
 ###### Trigger: provider_update_timestamp
 
-> **AI Analysis:** This trigger automatically updates the `updated_at` timestamp to the current time whenever a provider's record is modified. Its purpose is to maintain a reliable audit trail, ensuring there is always an accurate record of when a provider's data was last changed. This supports data governance and helps track the freshness of provider information.
+> **AI Analysis:** This trigger automatically updates the `updated_at` timestamp to the current time whenever a provider's record is modified. This ensures an accurate and automated audit trail, tracking the last time any provider's data was changed within the system.
 
-Business Rule: When any information for a provider is updated, the record's "last updated" timestamp must be automatically set to the current date and time.
+The trigger implements the business rule: "The date and time of the last modification must be recorded for every provider record."
 
-Implications: The trigger enforces data consistency by ensuring the `updated_at` field is always accurate, which is crucial for auditing and tracking data history. The performance impact is negligible for single-row updates but could be a minor consideration during very large bulk update operations.
+This automation enhances data integrity and provides a reliable audit log for tracking data currency, which is critical for compliance and operational purposes. The performance impact is negligible.
 
 **Definition:**
 ```sql
@@ -347,7 +336,7 @@ and is referenced by encounter, referenced by provider_organization.
 ##### Table: healthcare.provider_organization
 - Type: `table` · Rows: `28` · Size: `24.00 KB`
 
-> This table serves as a junction table to manage the many-to-many relationship between healthcare providers and healthcare organizations. It connects the `provider` table with the `organization` table, allowing the system to track which providers are affiliated with which specific hospitals or clinics. The inclusion of `role` and `start_date` columns indicates the table's purpose is to maintain a record of a provider's employment or credentialing history, detailing their specific position and the beginning of their tenure at each organization.
+> This table documents the professional relationship between healthcare providers and healthcare organizations, acting as a directory of affiliations. It connects a specific provider to an organization, such as a hospital or clinic, defining their role and the start date of their association. The structure is essential for managing provider networks, credentialing, and tracking where a professional is authorized to practice and in what capacity.
 
 ###### Columns
 | Column | Type | Nullable | Default | PK | FK | Details | Description |
@@ -367,7 +356,7 @@ and is referenced by encounter, referenced by provider_organization.
 ###### Indexes
 | Name | Type | Columns | Unique | Primary | Clustered | Size | Description |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| provider\_organization\_pkey | primary | organization\_id, provider\_id | Yes | Yes | No |  |  |
+| provider\_organization\_pkey | primary | provider\_id, organization\_id | Yes | Yes | No |  |  |
 
 ###### Related Tables
 | From | Column | To | Column | Constraint | On Delete | On Update | Type |
@@ -388,9 +377,9 @@ This table references organization, references provider.
 
 ##### Procedure: get_patient_summary
 
-> **AI Analysis:** This procedure retrieves a consolidated summary for a specific patient, including their demographic details, total number of encounters, and the date of their most recent visit. It also calculates the cumulative financial charges associated with all their medical encounters, providing a combined clinical and financial overview.
-Operation Type: Data aggregation and reporting
-Role in Business Processes: This procedure is designed to populate a patient summary view or dashboard within a healthcare application. It allows clinical or administrative staff to quickly access a high-level overview of a patient's activity and financial history in a single request.
+> **AI Analysis:** This procedure provides a consolidated summary for a specific patient, including their demographic details, total number of medical encounters, and the date of their most recent visit. It also calculates the cumulative financial charges associated with all their past encounters, providing a high-level overview of the patient's clinical and billing history.
+Data aggregation and reporting
+This function likely supports a patient dashboard or a clinical summary view, enabling users like administrators or clinicians to quickly assess a patient's engagement and financial standing with the healthcare provider.
 
 **Definition:**
 ```sql
@@ -415,9 +404,7 @@ $function$
 
 ##### Procedure: get_provider_statistics
 
-> **AI Analysis:** This procedure calculates and returns key financial and operational performance metrics for a specific healthcare provider. It summarizes a provider's total patient encounters, the total revenue generated from those encounters, and the average charge per encounter, providing a snapshot of their activity.
-Reporting and business calculation
-The procedure likely supports a provider performance dashboard or a financial reporting module within a practice management application. It provides a consolidated view of a provider's productivity and financial contribution, enabling performance analysis and business intelligence.
+> **AI Analysis:** This procedure calculates key performance and financial statistics for a single healthcare provider based on their ID. It aggregates data to provide a summary of the provider's total patient encounters, the total revenue they have generated, and their average revenue per patient encounter. This operation is a form of reporting and business calculation, likely used to power a provider performance dashboard or a financial analysis report. Its role is to provide a consolidated view of a provider's productivity and financial contribution, supporting operational oversight and business intelligence within the healthcare organization.
 
 **Definition:**
 ```sql
@@ -446,11 +433,9 @@ $function$
 
 ##### Procedure: update_timestamp
 
-> **AI Analysis:** This procedure is a trigger function that automatically updates a record's timestamp whenever it is modified. Its business purpose is to maintain an accurate audit trail, ensuring that every change to a record is logged with the current time for data integrity and compliance purposes.
-
-Data Auditing
-
-This function supports all business processes that modify data by enforcing a consistent data governance policy. It provides a reliable "last modified" date for any record it is attached to, which is critical for tracking the history of patient, provider, or claim information.
+> **AI Analysis:** This procedure automatically updates a record's timestamp to the current time whenever it is modified. Its business purpose is to maintain an accurate audit trail of data changes, ensuring data integrity and supporting compliance requirements for records within the healthcare system.
+Data maintenance and governance
+The procedure enforces a critical business rule for data management by automatically tracking the last modification time for any record it is attached to. This provides a reliable audit log for tracking changes to important entities like patients, encounters, or claims.
 
 **Definition:**
 ```sql
@@ -505,7 +490,7 @@ patient.idx_patient_last_name (index)
 
 | Key | Value |
 | --- | ----- |
-| Unique Indexes | 7 |
+| Unique Indexes (incl. PKs) | 7 |
 | Primary Indexes | 6 |
 | Clustered Indexes | 0 |
 | Estimated Index Storage | 0.00 B |
@@ -535,9 +520,7 @@ Schema: healthcare
 Type: table
 
 AI Analysis:
-This table stores the individual billable services or procedures performed during a patient's healthcare visit. Each record represents a single line item on a medical claim, detailing the specific procedure, its cost, and the date it was provided. The table's primary purpose is to itemize all charges for billing and insurance reimbursement.
-
-Each claim line item is associated with a specific patient visit or `encounter`, allowing the system to group all charges related to that single interaction. The presence of `procedure_code` and `modifier` columns indicates this table is a core component of a revenue cycle management or medical billing system, capturing the necessary details to generate claims for insurance companies and statements for patients.
+This table stores the individual line items for a healthcare billing claim, with each row representing a specific service or procedure provided to a patient. It captures the procedure code, the description of the service, the date it was rendered, and the associated charge amount. By linking to the `encounter` table, it associates each specific charge with a particular patient visit, forming the detailed basis for generating patient bills and submitting claims to insurance payers.
 
 Relationships:
 This table references encounter.
@@ -559,7 +542,7 @@ Schema: healthcare
 Type: table
 
 AI Analysis:
-This table acts as a central record for patient-provider interactions within a healthcare setting, storing details for each visit or encounter. It documents who the patient was, which provider they saw, where the encounter took place, and on what date. This table links patients, providers, and healthcare organizations together for a specific event and serves as the foundational record for subsequent activities, such as medical billing, as indicated by its relationship with claim lines. The presence of 'encounter_type' and 'status' fields suggests it supports a structured workflow for managing different kinds of patient visits from scheduling through completion.
+This table stores records of patient encounters, representing specific interactions between a patient and a healthcare provider. It acts as a central event log, connecting the patient, the provider who saw them, and the organization where the visit occurred. This encounter information is then used as the basis for creating individual billing items on a medical claim.
 
 Relationships:
 This table references organization, references patient, references provider. and is referenced by claim_line.
@@ -581,11 +564,7 @@ Schema: healthcare
 Type: table
 
 AI Analysis:
-This table serves as a master directory of healthcare organizations, such as hospitals, clinics, or labs. It stores foundational business information for each entity, including its name, type, location, and tax identifier. This master list is essential for tracking where patient care is delivered and which organizations employ or are affiliated with providers.
-
-In business terms, this table connects patient encounters to the specific facility where they occurred. It also links healthcare providers to the organizations they are affiliated with, establishing a network of care locations and personnel.
-
-The inclusion of a `tax_id` suggests the system supports financial processes like billing or insurance claims. The `type` column enables the system to differentiate between various kinds of facilities (e.g., hospitals vs. private clinics), which is crucial for reporting and operational management within a healthcare network.
+This table serves as a master directory of healthcare organizations, such as hospitals, clinics, or labs, storing their core contact and identifying information. It provides a centralized, authoritative source for all facilities and corporate entities involved in the healthcare system. This table is referenced by patient encounters to specify the location where care was delivered and is used to associate healthcare providers with the organizations they are affiliated with. The presence of a `type` and `tax_id` column indicates its importance for administrative functions like billing, network management, and regulatory reporting.
 
 Relationships:
 and is referenced by encounter, referenced by provider_organization.
@@ -607,11 +586,7 @@ Schema: healthcare
 Type: table
 
 AI Analysis:
-This table serves as a master patient index, storing the core demographic, contact, and insurance information for each individual within a healthcare system. It acts as the central source of truth for patient identity.
-
-This table is the primary reference for patient information, linking a unique patient to all of their related medical activities, such as the specific visits or treatments detailed in the `encounter` table.
-
-The structure supports key administrative and clinical functions, enabling staff to quickly find and verify patient records by name or date of birth for scheduling, treatment, and billing purposes.
+This table serves as a master record for storing core demographic, contact, and insurance information for individuals within a healthcare system. It functions as the central source of truth for identifying and managing patient data across the application. This table is the primary reference for patient identity, linking to other tables like `encounter` to associate each patient with their specific medical visits or interactions. The inclusion of an `insurance_id` points to its use in billing and administrative workflows, while indexes on `last_name` and `date_of_birth` suggest these fields are critical for frequent patient lookups.
 
 Relationships:
 and is referenced by encounter.
@@ -633,9 +608,7 @@ Schema: healthcare
 Type: table
 
 AI Analysis:
-This table is a master directory of individual healthcare providers, storing their professional details, credentials like the National Provider Identifier (NPI), and contact information. It serves as a central reference for identifying and managing the clinicians who deliver care within the system.
-
-In business terms, this table connects each provider to the specific patient `encounters` they conduct and also links them to the larger healthcare `organizations` they are affiliated with. The presence of columns like `specialty` and `provider_type` indicates the system uses this data to manage provider roles, facilitate patient scheduling, and likely support billing and reporting functions.
+This table serves as a master directory of healthcare providers, storing essential identifying information like their name, specialty, and unique National Provider Identifier (NPI). It functions as a central reference, linking providers to specific patient encounters and associating them with the larger healthcare organizations they belong to. The structure is designed to support core business functions such as managing a provider network, tracking patient care activities, and facilitating referrals.
 
 Relationships:
 and is referenced by encounter, referenced by provider_organization.
@@ -644,7 +617,7 @@ Technical Details:
 Columns: 10 (id(integer), name(varchar), provider_type(varchar), specialty(varchar), npi(varchar)...)
 Primary Keys: id
 Foreign Keys: None
-Constraints: 2
+Constraints: 3
 Indexes: 3
 Triggers: 1
 Row Count: 22
@@ -657,7 +630,7 @@ Schema: healthcare
 Type: table
 
 AI Analysis:
-This table serves as a junction table to manage the many-to-many relationship between healthcare providers and healthcare organizations. It connects the `provider` table with the `organization` table, allowing the system to track which providers are affiliated with which specific hospitals or clinics. The inclusion of `role` and `start_date` columns indicates the table's purpose is to maintain a record of a provider's employment or credentialing history, detailing their specific position and the beginning of their tenure at each organization.
+This table documents the professional relationship between healthcare providers and healthcare organizations, acting as a directory of affiliations. It connects a specific provider to an organization, such as a hospital or clinic, defining their role and the start date of their association. The structure is essential for managing provider networks, credentialing, and tracking where a professional is authorized to practice and in what capacity.
 
 Relationships:
 This table references organization, references provider.

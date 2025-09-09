@@ -787,7 +787,7 @@ class DocumentationReport(BaseModel):
             lines.append(
                 _kv_table(
                     [
-                        ("Unique Indexes", f"{unique_count:,}"),
+                        ("Unique Indexes (incl. PKs)", f"{unique_count:,}"),
                         ("Primary Indexes", f"{primary_count:,}"),
                         ("Clustered Indexes", f"{clustered_count:,}"),
                         ("Estimated Index Storage", _bytes(size_total)),

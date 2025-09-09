@@ -294,6 +294,10 @@ def get_table_schema_tool(
     check_constraints = get_check_constraints_tool(connector, table_name, schema_name)
     constraints.extend(check_constraints)
 
+    # Add UNIQUE constraints
+    unique_constraints = get_unique_constraints_tool(connector, table_name, schema_name)
+    constraints.extend(unique_constraints)
+
     index_info: List[IndexInfo] = []
     for idx in indexes:
         # Check if this index is the primary key index
@@ -325,7 +329,9 @@ def get_table_schema_tool(
                 name=pk_constraint["name"] or f"{table_name}_pkey",
                 table_name=table_name,
                 index_type=IndexType.PRIMARY,
-                columns=list(pk_columns),
+                columns=pk_constraint[
+                    "constrained_columns"
+                ],  # Use original order from constraint
                 is_unique=True,
                 is_primary=True,
             )
@@ -743,6 +749,20 @@ def get_check_constraints_tool(
         return _get_postgresql_check_constraints(connector, table_name, schema_name)
     elif db_type == DatabaseType.MYSQL:
         return _get_mysql_check_constraints(connector, table_name, schema_name)
+    else:
+        return []
+
+
+def get_unique_constraints_tool(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str] = None
+) -> List[ConstraintInfo]:
+    """Get UNIQUE constraints for a table."""
+    db_type = connector.get_database_type()
+
+    if db_type == DatabaseType.POSTGRESQL:
+        return _get_postgresql_unique_constraints(connector, table_name, schema_name)
+    elif db_type == DatabaseType.MYSQL:
+        return _get_mysql_unique_constraints(connector, table_name, schema_name)
     else:
         return []
 
@@ -1656,3 +1676,110 @@ Keep the response focused on business functionality rather than technical implem
     )
 
     return pb.render(RenderOptions(include_toc=False))
+
+
+def _get_postgresql_unique_constraints(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
+) -> List[ConstraintInfo]:
+    """Get UNIQUE constraints for PostgreSQL (excluding primary keys)."""
+    schema_filter = f"AND tc.table_schema = '{schema_name}'" if schema_name else ""
+
+    sql = f"""
+    SELECT 
+        tc.constraint_name,
+        array_agg(kcu.column_name ORDER BY kcu.ordinal_position) as constrained_columns
+    FROM information_schema.table_constraints tc
+    JOIN information_schema.key_column_usage kcu 
+        ON tc.constraint_name = kcu.constraint_name
+        AND tc.table_schema = kcu.table_schema
+    WHERE tc.constraint_type = 'UNIQUE'
+    AND tc.table_name = '{table_name}'
+    {schema_filter}
+    GROUP BY tc.constraint_name
+    ORDER BY tc.constraint_name
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        constraints = []
+
+        for row in results:
+            # Handle column arrays
+            constrained_columns = []
+            if row["constrained_columns"]:
+                if isinstance(row["constrained_columns"], list):
+                    constrained_columns = row["constrained_columns"]
+                else:
+                    # Parse PostgreSQL array format
+                    import re
+
+                    col_match = re.findall(r"[^{},]+", str(row["constrained_columns"]))
+                    constrained_columns = [
+                        col.strip('"') for col in col_match if col.strip()
+                    ]
+
+            constraints.append(
+                ConstraintInfo(
+                    name=row["constraint_name"],
+                    type=ConstraintType.UNIQUE,
+                    columns=constrained_columns,
+                )
+            )
+
+        return constraints
+    except Exception:
+        return []
+
+
+def _get_mysql_unique_constraints(
+    connector: DatabaseConnector, table_name: str, schema_name: Optional[str]
+) -> List[ConstraintInfo]:
+    """Get UNIQUE constraints for MySQL (excluding primary keys)."""
+    schema_filter = (
+        f"AND table_schema = '{schema_name}'"
+        if schema_name
+        else "AND table_schema = DATABASE()"
+    )
+
+    sql = f"""
+    SELECT 
+        constraint_name,
+        column_name
+    FROM information_schema.key_column_usage
+    WHERE constraint_name IN (
+        SELECT constraint_name 
+        FROM information_schema.table_constraints 
+        WHERE constraint_type = 'UNIQUE'
+        AND table_name = '{table_name}'
+        {schema_filter}
+    )
+    AND table_name = '{table_name}'
+    {schema_filter}
+    ORDER BY constraint_name, ordinal_position
+    """
+
+    try:
+        results = connector.execute_safe_sql(sql)
+        constraints_dict: Dict[str, List[str]] = {}
+
+        for row in results:
+            constraint_name = row["constraint_name"]
+            column_name = row["column_name"]
+
+            if constraint_name not in constraints_dict:
+                constraints_dict[constraint_name] = []
+            constraints_dict[constraint_name].append(column_name)
+
+        constraints = []
+        for constraint_name, columns in constraints_dict.items():
+            constraints.append(
+                ConstraintInfo(
+                    name=constraint_name,
+                    type=ConstraintType.UNIQUE,
+                    columns=columns,
+                )
+            )
+
+        return constraints
+    except Exception:
+        return []
