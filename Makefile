@@ -17,6 +17,12 @@ help:
 run:
 	uv run --active main.py example/EXAMPLE_OUTPUT.md
 
+compose-up:
+	docker compose -f ./example/docker-compose.yml up
+
+compose-down:
+	docker compose -f ./example/docker-compose.yml down
+
 .PHONY: fmt
 # fmt:
 #   Format all python code
