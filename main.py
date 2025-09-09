@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 from config import load_config
@@ -7,6 +8,22 @@ from dbspelunker.genai import GeminiModel
 
 def main() -> None:
     """Generate comprehensive AI-powered documentation for the entire database."""
+    parser = argparse.ArgumentParser(
+        description="Generate AI-powered documentation for a database"
+    )
+    parser.add_argument(
+        "output_file",
+        nargs="?",
+        default="output/database_documentation.md",
+        help="Output file path for the documentation (default: output/database_documentation.md)",
+    )
+
+    args = parser.parse_args()
+    output_path = Path(args.output_file)
+
+    # Create output directory if it doesn't exist
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     try:
         config = load_config()
         gemini_model = GeminiModel(config)
@@ -30,12 +47,10 @@ def main() -> None:
 
         # Generate full documentation with AI summaries
         documentation = spelunker.generate_full_documentation()
-        documentation.to_markdown(
-            path=Path("output/database_documentation.md"), include_json_appendix=False
-        )
+        documentation.to_markdown(path=output_path, include_json_appendix=False)
 
         print("Documentation generated successfully!")
-        print("Output saved to output/database_documentation.md")
+        print(f"Output saved to {output_path}")
 
     except Exception as e:
         print(f"Failed to generate documentation: {str(e)}")

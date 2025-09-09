@@ -15,7 +15,7 @@ help:
 # run:
 #   Run the main application
 run:
-	uv run --active main.py
+	uv run --active main.py example/EXAMPLE_OUTPUT.md
 
 .PHONY: fmt
 # fmt:
