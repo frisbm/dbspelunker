@@ -1,11 +1,11 @@
-# Database Documentation: flume
+# Database Documentation: clinical
 
 - Type: `postgresql` · Generated: `2025-09-08 18:01:11`
 
 ## Executive Summary
 
 Database Analysis Summary:
-- Database: flume (postgresql)
+- Database: clinical (postgresql)
 - Total Tables: 5
 - Total Columns: 48
 - Total Constraints: 10
@@ -21,7 +21,7 @@ The analysis identified 5 foreign key relationships between tables.
 
 | Key | Value |
 | --- | ----- |
-| Name | flume |
+| Name | clinical |
 | Type | postgresql |
 | Version |  |
 | Total Tables | 5 |
