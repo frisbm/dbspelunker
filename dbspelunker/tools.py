@@ -39,7 +39,7 @@ def format_sql(sql: str) -> str:
 
     try:
         # Use sqlparse to format the SQL with nice options
-        formatted = sqlparse.format(
+        formatted: str = sqlparse.format(  # type: ignore[no-untyped-call]
             sql,
             reindent=True,  # Add proper indentation
             keyword_case="upper",  # Uppercase SQL keywords

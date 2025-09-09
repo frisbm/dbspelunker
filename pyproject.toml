@@ -18,3 +18,8 @@ dev = [
     "mypy>=1.17.1",
     "ruff>=0.12.12",
 ]
+
+
+[[tool.mypy.overrides]]
+module = ["sqlparse"]
+follow_untyped_imports = true
