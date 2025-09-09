@@ -17,12 +17,6 @@ help:
 run:
 	uv run --active main.py example/EXAMPLE_OUTPUT.md
 
-compose-up:
-	docker compose -f ./example/docker-compose.yml up
-
-compose-down:
-	docker compose -f ./example/docker-compose.yml down
-
 .PHONY: fmt
 # fmt:
 #   Format all python code
@@ -42,3 +36,19 @@ lint:
 #   Run all tests
 test:
 	uv run --active pytest -v .
+
+
+##################################################################
+# Example #########################################################
+##################################################################
+.PHONY: compose-up
+# compose-up:
+#   Start the example application with docker compose
+compose-up:
+	docker compose -f ./example/docker-compose.yml up
+
+.PHONY: compose-down
+# compose-down:
+#   Stop the example application with docker compose
+compose-down:
+	docker compose -f ./example/docker-compose.yml down
