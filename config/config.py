@@ -1,15 +1,14 @@
 import json
 import os
-from typing import Literal, Optional, Union
+from typing import Optional
 
 from pydantic import BaseModel
-from pydantic_ai.providers.google import VertexAILocation
 
 
 class Config(BaseModel):
     model: str
     token_limit: int
-    location: Union[VertexAILocation, Literal["global"]]
+    location: str
     project_id: str
     thinking_budget: Optional[int]
     maximum_remote_calls: int
