@@ -15,6 +15,7 @@ class Config(BaseModel):
     maximum_remote_calls: int
     max_output_tokens: int
     top_p: float
+    top_k: Optional[int]
     database_url: str
 
 

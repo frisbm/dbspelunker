@@ -2,7 +2,7 @@ import asyncio
 import logging
 from typing import List, Optional
 
-from pydantic_ai import Agent
+from pydantic import BaseModel
 
 from .genai import GeminiModel
 from .models import (
@@ -22,9 +22,13 @@ from .tools import (
 )
 
 
+class ResponseModel(BaseModel):
+    out: str
+
+
 class DBSpelunker:
-    def __init__(self, gemini_model: GeminiModel, db_connection_str: str):
-        self.gemini_model = gemini_model
+    def __init__(self, gemini: GeminiModel, db_connection_str: str):
+        self.gemini = gemini
         self.db_connection_str = db_connection_str
         self.logger = logging.getLogger(__name__)
 
@@ -55,14 +59,15 @@ class DBSpelunker:
             prompt = generate_table_summary_prompt(table_info, relationships)
 
             # Create a simple agent for text generation
-            summary_agent = Agent(
-                model=self.gemini_model.get_model(temperature=0.3), output_type=str
+            summary_agent = self.gemini.new_agent(
+                system_instruction="You are an expert database analyst with knowledge of SQL and database design.",
+                response_schema=ResponseModel,
+                temperature=1.2,
+                tools=None,
             )
 
             response = await summary_agent.run(prompt)
-            return (
-                str(response.output) if hasattr(response, "output") else str(response)
-            )
+            return response.out
         except Exception as e:
             self.logger.warning(
                 f"Failed to generate AI summary for table {table_info.name}: {str(e)}"
@@ -78,14 +83,15 @@ class DBSpelunker:
             prompt = generate_trigger_summary_prompt(trigger_info, table_info)
 
             # Create a simple agent for text generation
-            summary_agent = Agent(
-                model=self.gemini_model.get_model(temperature=0.3), output_type=str
+            summary_agent = self.gemini.new_agent(
+                system_instruction="You are an expert database analyst with knowledge of SQL and database triggers.",
+                response_schema=ResponseModel,
+                temperature=0.5,
+                tools=None,
             )
 
             response = await summary_agent.run(prompt)
-            return (
-                str(response.output) if hasattr(response, "output") else str(response)
-            )
+            return response.out
         except Exception as e:
             self.logger.warning(
                 f"Failed to generate AI summary for trigger {trigger_info.name}: {str(e)}"
@@ -103,14 +109,15 @@ class DBSpelunker:
             )
 
             # Create a simple agent for text generation
-            summary_agent = Agent(
-                model=self.gemini_model.get_model(temperature=0.3), output_type=str
+            summary_agent = self.gemini.new_agent(
+                system_instruction="You are an expert database analyst with knowledge of SQL and stored procedures.",
+                response_schema=ResponseModel,
+                temperature=0.8,
+                tools=None,
             )
 
             response = await summary_agent.run(prompt)
-            return (
-                str(response.output) if hasattr(response, "output") else str(response)
-            )
+            return response.out
         except Exception as e:
             self.logger.warning(
                 f"Failed to generate AI summary for procedure {procedure_info.name}: {str(e)}"

@@ -26,11 +26,9 @@ def main() -> None:
 
     try:
         config = load_config()
-        gemini_model = GeminiModel(config)
+        gemini = GeminiModel(config)
 
-        spelunker = DBSpelunker(
-            gemini_model=gemini_model, db_connection_str=config.database_url
-        )
+        spelunker = DBSpelunker(gemini=gemini, db_connection_str=config.database_url)
 
         print("DBSpelunker initialized successfully!")
 
